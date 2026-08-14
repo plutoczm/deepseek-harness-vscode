@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -12,6 +12,12 @@ const execFileAsync = promisify(execFile);
 async function commandPath(command) {
   const { stdout } = await execFileAsync('sh', ['-lc', `command -v ${command}`]);
   return stdout.trim();
+}
+
+async function writePythonShim(file, systemPython, modules, extraPythonPath = '') {
+  const script = `#!/usr/bin/env bash\nif [ "\${1:-}" = "-c" ] && printf '%s' "\${2:-}" | grep -q 'packages_distributions'; then\n  printf '%s\\n' '${JSON.stringify(modules)}'\n  exit 0\nfi\n${extraPythonPath ? `export PYTHONPATH=${JSON.stringify(extraPythonPath)}:\"\${PYTHONPATH:-}\"\n` : ''}exec ${JSON.stringify(systemPython)} "$@"\n`;
+  await writeFile(file, script, { encoding: 'utf8', mode: 0o755 });
+  await chmod(file, 0o755);
 }
 
 test('configures a fixed environment whitelist and auto-routes a Python script', {
@@ -27,14 +33,22 @@ test('configures a fixed environment whitelist and auto-routes a Python script',
     process.env.DEEPSEEK_HARNESS_SESSION_ENV_DIR = sessionDir;
     await mkdir(project, { recursive: true });
 
-    for (const name of ['.venv', 'venv']) {
-      const bin = path.join(project, name, 'bin');
-      await mkdir(bin, { recursive: true });
-      await symlink(systemPython, path.join(bin, 'python'));
-    }
+    const defaultBin = path.join(project, '.venv', 'bin');
+    const routedBin = path.join(project, 'venv', 'bin');
+    const routedLib = path.join(project, 'venv', 'lib');
+    await mkdir(defaultBin, { recursive: true });
+    await mkdir(routedBin, { recursive: true });
+    await mkdir(routedLib, { recursive: true });
+    await writePythonShim(path.join(defaultBin, 'python'), systemPython, ['shared_pkg']);
+    await writePythonShim(path.join(routedBin, 'python'), systemPython, ['shared_pkg', 'unique_eval'], routedLib);
+    await writeFile(path.join(routedLib, 'unique_eval.py'), 'VALUE = 1\n', 'utf8');
 
-    const routedScript = path.join(project, 'run_venv_task.py');
-    await writeFile(routedScript, 'import os\nprint(os.environ.get("DHR_SELECTED_ENV", ""))\n', 'utf8');
+    const routedScript = path.join(project, 'evaluate_task.py');
+    await writeFile(
+      routedScript,
+      'import os\nimport unique_eval\nprint(os.environ.get("DHR_SELECTED_ENV", ""))\n',
+      'utf8',
+    );
 
     let registered;
     let questionCall = 0;
@@ -74,6 +88,8 @@ test('configures a fixed environment whitelist and auto-routes a Python script',
     assert.equal(metadata.defaultName, '.venv');
     assert.deepEqual(metadata.allowed.map((item) => item.name), ['.venv', 'venv']);
     assert.equal(metadata.autoRouting, true);
+    assert.ok(metadata.allowed.find((item) => item.name === 'venv').modules.includes('unique_eval'));
+    assert.ok(!metadata.allowed.find((item) => item.name === '.venv').modules.includes('unique_eval'));
 
     await execFileAsync(process.execPath, ['--check', routerPath]);
     const activation = await readFile(activationPath, 'utf8');
