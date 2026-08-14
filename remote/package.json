@@ -24,7 +24,7 @@
   "build": {
     "appId": "io.github.plutoczm.deepseek-harness-remote",
     "productName": "DeepSeek Harness Remote",
-    "asar": true,
+    "asar": false,
     "directories": {
       "buildResources": "build",
       "output": "dist"
