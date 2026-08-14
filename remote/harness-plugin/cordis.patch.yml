@@ -1,3 +1,5 @@
 - insert:
     - id: remote-session-env
       name: deepseek-harness-remote-session-env
+    - id: remote-usage-cost
+      name: deepseek-harness-remote-usage-cost
