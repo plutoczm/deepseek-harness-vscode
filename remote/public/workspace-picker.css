@@ -1,0 +1,119 @@
+.workspace-picker{
+  position:relative;
+}
+
+.workspace-picker.workspace-picker-open{
+  z-index:60;
+}
+
+.workspace-picker .file-browser{
+  position:absolute;
+  z-index:80;
+  top:calc(100% + 8px);
+  left:0;
+  right:0;
+  margin-top:0;
+  max-height:min(420px,56vh);
+  border-color:var(--line-2);
+  background:#1b1c1e;
+  box-shadow:0 18px 48px rgba(0,0,0,.46),0 0 0 1px rgba(103,158,254,.04);
+  transform-origin:top center;
+}
+
+.workspace-picker .file-browser:not(.hidden){
+  animation:workspace-browser-in .13s cubic-bezier(.2,.75,.25,1);
+}
+
+.browser-path.browser-popover-header{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  min-height:43px;
+  padding:7px 8px 7px 12px;
+  overflow:visible;
+  background:#202123;
+}
+
+.browser-path-text{
+  flex:1;
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  color:var(--tertiary);
+  font:11px/1.4 var(--mono);
+}
+
+.browser-popover-actions{
+  display:flex;
+  align-items:center;
+  flex:none;
+  gap:6px;
+}
+
+.browser-popover-button{
+  min-height:28px;
+  padding:0 9px;
+  border:1px solid var(--line-2);
+  border-radius:8px;
+  background:var(--layer-2);
+  color:var(--tertiary);
+  font:600 10.5px/1 var(--font);
+  cursor:pointer;
+  transition:background .12s ease,border-color .12s ease,color .12s ease;
+}
+
+.browser-popover-button:hover{
+  border-color:var(--line-3);
+  background:var(--layer-3);
+  color:var(--text);
+}
+
+.browser-popover-button.select{
+  border-color:rgba(103,158,254,.2);
+  background:rgba(103,158,254,.1);
+  color:var(--blue);
+}
+
+.browser-popover-button.select:hover{
+  border-color:rgba(103,158,254,.38);
+  background:rgba(103,158,254,.16);
+  color:#91b6ff;
+}
+
+.workspace-picker .browser-item{
+  min-height:42px;
+}
+
+.workspace-picker .browser-item:focus-visible,
+.browser-popover-button:focus-visible{
+  outline:2px solid rgba(103,158,254,.72);
+  outline-offset:-2px;
+}
+
+@keyframes workspace-browser-in{
+  from{opacity:0;transform:translateY(-5px) scale(.995)}
+  to{opacity:1;transform:translateY(0) scale(1)}
+}
+
+@media(max-width:680px){
+  .workspace-picker .file-browser{
+    top:calc(100% + 6px);
+    max-height:min(390px,58vh);
+  }
+
+  .browser-path.browser-popover-header{
+    align-items:flex-start;
+    flex-direction:column;
+    gap:7px;
+    padding:9px 10px;
+  }
+
+  .browser-popover-actions{
+    width:100%;
+  }
+
+  .browser-popover-button{
+    flex:1;
+  }
+}

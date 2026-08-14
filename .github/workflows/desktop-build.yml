@@ -1,0 +1,40 @@
+name: Desktop App
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'remote/**'
+      - '.github/workflows/desktop-build.yml'
+  pull_request:
+    paths:
+      - 'remote/**'
+      - '.github/workflows/desktop-build.yml'
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: remote
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install desktop dependencies
+        run: npm install --no-audit --no-fund
+      - name: Check launcher
+        shell: bash
+        run: npm run check
+      - name: Run unit tests
+        run: npm test
+      - name: Build Windows installer
+        run: npm run desktop:win
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: DeepSeek-Harness-Remote-Windows-x64
+          path: remote/dist/*.exe
+          if-no-files-found: error

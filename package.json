@@ -71,6 +71,8 @@
     "package": "npm run compile && vsce package --out deepseek-harness-vscode.vsix",
     "check": "npm run compile",
     "remote": "npm --prefix remote start",
+    "remote:desktop": "npm --prefix remote run desktop",
+    "remote:desktop:win": "npm --prefix remote run desktop:win",
     "remote:check": "npm --prefix remote run check",
     "remote:test": "npm --prefix remote test"
   },

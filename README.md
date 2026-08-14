@@ -1,20 +1,19 @@
 # DeepSeek Harness Remote
 
-Run the **official DeepSeek Harness** on a remote Linux server over SSH, while controlling it from a small local browser launcher. VS Code is no longer required for the remote workflow.
+Run the **official DeepSeek Harness** on a remote Linux server over SSH from a dedicated desktop application. VS Code is no longer required for the remote workflow, and normal users do not need to start the launcher from a terminal.
 
-This repository still contains the previously published VS Code extension, but the recommended path is now the standalone app in [`remote/`](./remote/).
+This repository still contains the previously published VS Code extension, but the recommended path is the desktop app in [`remote/`](./remote/).
 
 ## What it does
 
 ```text
-Local browser
-    │
-    ▼
-DeepSeek Harness Remote (127.0.0.1 only)
+DeepSeek Harness Remote desktop app
     │
     ├── reads ~/.ssh/config
     ├── lets you choose an SSH host
-    ├── lets you browse/select a remote workspace
+    ├── browses remote directories and files
+    ├── previews text and common images
+    ├── lets you choose a remote workspace
     ├── checks remote Node/Python/Conda
     ├── installs a private Node 22 runtime when needed (no sudo)
     └── opens an SSH local port-forward
@@ -30,42 +29,48 @@ DeepSeek Harness Remote (127.0.0.1 only)
 
 Harness itself runs **on the selected remote host**, so its Bash, Git and filesystem operations naturally target that server. The launcher does not reimplement the agent or its coding tools.
 
-## Quick start
+## Windows desktop app
 
-Local requirements:
-
-- Node.js 20+ on the computer running the launcher.
-- OpenSSH `ssh` and `scp` available on PATH.
-- SSH key/agent authentication that already works with `ssh <alias>`.
-
-Then:
-
-```bash
-git clone https://github.com/plutoczm/deepseek-harness-vscode.git
-cd deepseek-harness-vscode
-npm run remote
-```
-
-Or:
-
-```bash
-cd remote
-npm start
-```
-
-The launcher opens:
+The primary distribution target is a Windows x64 installer:
 
 ```text
-http://127.0.0.1:4173
+DeepSeek-Harness-Remote-0.2.0-Setup-x64.exe
 ```
 
+After installation, launch **DeepSeek Harness Remote** from the desktop shortcut or Start menu. The app starts its local control service internally and opens the launcher UI inside the desktop window. No `npm run remote`, PowerShell window, or local browser tab is required for normal use.
+
+The desktop app still delegates SSH authentication to the system OpenSSH client, so an existing command such as:
+
+```text
+ssh GDWYY70
+```
+
+should already work with key/agent authentication.
+
+Inside the app:
+
 1. Choose or type an SSH alias such as `GDWYY70`.
-2. Click **Check**.
-3. Choose/browse the remote workspace.
-4. Click **Connect & Open Harness**.
-5. The official DeepSeek Harness Web UI opens through the SSH tunnel.
+2. Click **检查连接**.
+3. Choose the remote workspace using the collapsible directory picker or the **远程文件** page.
+4. Click **连接并打开 Harness**.
+5. The official DeepSeek Harness Web UI opens in its own application window through the SSH tunnel.
 
 The server list is populated from concrete `Host` entries in `~/.ssh/config`. You can also type any alias that your system `ssh` command understands.
+
+## Remote file browser
+
+The desktop app includes a read-only remote server explorer using the permissions of the selected SSH user.
+
+- Browse arbitrary accessible directories.
+- Search/filter the current directory client-side.
+- Jump to `/`, the SSH user's home directory, or the current Harness workspace.
+- Preview text files up to the first 1 MiB.
+- Preview PNG/JPEG/GIF/WebP/BMP images up to 15 MiB.
+- Copy remote file paths.
+- Set the current directory as the Harness workspace with one click.
+- Large/binary files are shown as metadata rather than transferred into the UI.
+
+The browser does not bypass server permissions and does not modify remote files. Code edits remain the responsibility of official Harness.
 
 ## Remote Node runtime
 
@@ -129,28 +134,43 @@ It also places the plugin package in the user's normal Harness module-resolution
 
 ## Security model
 
-- The control UI binds to `127.0.0.1`, not the LAN.
+- The local control service binds to `127.0.0.1`, not the LAN.
+- The Electron renderer uses sandboxing, context isolation and no Node integration.
 - SSH authentication is delegated to the system OpenSSH client and `~/.ssh/config`.
 - The launcher does not store SSH private keys.
 - Harness Web traffic is exposed locally only through `ssh -L`.
 - Remote commands run with the permissions of the SSH user you selected.
+- Unexpected non-local application window navigation is blocked; normal HTTPS links open externally.
 
 ## Current scope
 
-The standalone path currently targets Linux remote hosts with Bash. SSH password prompts are intentionally not embedded in the browser UI; configure key/agent authentication first. If the remote system Node is too old, downloading the private runtime requires access to `nodejs.org` from that server.
+The remote execution path currently targets Linux SSH hosts with Bash. SSH password prompts are intentionally not embedded in the application; configure key/agent authentication first. If the remote system Node is too old, downloading the private runtime requires access to `nodejs.org` from that server.
 
 The environment chooser is a native Harness question shown on first Bash use, plus `/env`. A permanent environment dropdown in the Harness header would require a deeper Web UI patch and is intentionally deferred to keep compatibility with upstream Harness.
 
 ## Development
 
+The terminal workflow remains available for contributors and debugging only:
+
 ```bash
 cd remote
+npm install
 npm run check
 npm test
-npm start
+npm run desktop
 ```
 
-The standalone app uses Node built-ins only; there are currently no third-party runtime dependencies.
+Build the Windows installer with:
+
+```bash
+npm run desktop:win
+```
+
+GitHub Actions also builds the Windows x64 installer and uploads it as the `DeepSeek-Harness-Remote-Windows-x64` workflow artifact.
+
+## Branding
+
+The desktop launcher uses its own monochrome whale mark and a DeepSeek Harness-inspired interface. It is a community remote launcher and is not affiliated with or endorsed by DeepSeek. DeepSeek Harness itself remains the official upstream runtime launched on the selected server.
 
 ## Legacy VS Code extension
 
@@ -160,7 +180,7 @@ The existing Marketplace extension remains in this repository for users who want
 plutoczm.deepseek-harness-vscode-plutoczm
 ```
 
-The standalone `remote/` app is the recommended architecture for SSH-host selection and remote Harness execution because it avoids VS Code Server, Remote Extension Host and file-watcher lifecycle coupling.
+The desktop `remote/` app is the recommended architecture for SSH-host selection and remote Harness execution because it avoids VS Code Server, Remote Extension Host and file-watcher lifecycle coupling.
 
 ## License
 
