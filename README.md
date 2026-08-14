@@ -1,61 +1,146 @@
 # DeepSeek Harness for VS Code
 
-A VS Code workspace extension that brings the official **DeepSeek Harness (`dsh`)** into the editor with a Claude Code-style agent sidebar and first-class **Remote SSH** support.
+A thin VS Code launcher for the **official DeepSeek Harness Web UI**, with first-class **Remote SSH** support.
 
-> Status: early alpha. DeepSeek Harness itself is currently in developer preview and may introduce breaking changes.
+This extension does **not** reimplement the DeepSeek agent, chat UI, sessions, file tools, Bash tools, or model configuration. It starts the official Harness on the current VS Code workspace host and lets VS Code expose that UI to you.
+
+> DeepSeek Harness is currently in developer preview and may introduce breaking changes.
+
+## What it does
+
+When you run **DeepSeek Harness: Open in VS Code**, the extension:
+
+1. Finds the current VS Code workspace folder.
+2. Runs the official Harness from that folder:
+
+   ```bash
+   npx --yes @deepseek-ai/dsh --profile web --port 3080
+   ```
+
+3. Waits for the Harness Web UI to become available on `127.0.0.1:3080`.
+4. Calls `vscode.env.asExternalUri(...)` so Remote SSH ports are reachable from the local VS Code client.
+5. Opens the forwarded URL in VS Code's built-in Simple Browser.
+
+The invoking directory is therefore the Harness workspace.
 
 ## Architecture
 
+### Local workspace
+
 ```text
-VS Code UI / Webview
-        │
-        │ postMessage
-        ▼
-Workspace Extension Host
-        │
-        │ JSON-lines bridge
-        ▼
-Python bridge
-        │
-        ▼
-deepseek-harness-sdk
-        │ JSON-RPC / stdio
-        ▼
-dsh-jsonrpc-agent
-        │
-        ├─ bash
-        ├─ read / write / edit
-        ├─ subagent
-        └─ session events
+Local VS Code
+    │
+    ├─ extension
+    │    │
+    │    └─ npx @deepseek-ai/dsh --profile web --port 3080
+    │
+    └─ official DeepSeek Harness Web UI
 ```
 
-The extension declares `extensionKind: ["workspace"]`. When a folder is opened through VS Code Remote SSH, the Extension Host, Python bridge, DeepSeek Harness runtime, filesystem tools, and shell execution all run on the **remote workspace host** rather than on your local machine.
+### Remote SSH workspace
 
-## Current features
+```text
+Your local computer
+┌─────────────────────────────────────┐
+│ VS Code                             │
+│                                     │
+│ Simple Browser                     │
+│     ▲                               │
+└─────┼───────────────────────────────┘
+      │ VS Code Remote port forwarding
+      │
+      ▼
+Remote Linux server (no GUI required)
+┌─────────────────────────────────────┐
+│ VS Code Server / Extension Host     │
+│                                     │
+│ deepseek-harness-vscode             │
+│          │                          │
+│          ▼                          │
+│ npx @deepseek-ai/dsh                │
+│ --profile web --port 3080           │
+│          │                          │
+│     127.0.0.1:3080                  │
+│          │                          │
+│          ├─ Harness Agent           │
+│          ├─ Bash                    │
+│          ├─ filesystem tools        │
+│          ├─ sessions                │
+│          └─ official Web UI         │
+│                                     │
+│ /home/user/project                  │
+└─────────────────────────────────────┘
+```
 
-- DeepSeek Harness activity-bar container and agent sidebar
-- DeepSeek-V4-Pro / DeepSeek-V4-Flash model setting
-- Official `deepseek-harness-sdk` runtime integration
-- Streaming Harness notifications (`session.event`, status, subagent lifecycle)
-- Workspace-persisted current session id
-- Persistent sidebar draft and recent UI history
-- Secure DeepSeek API key storage through VS Code `SecretStorage`
-- One-command runtime installation / upgrade
-- Remote SSH-compatible workspace execution
-- New-session and interrupt-current-run commands
-- Context chips for active selection, current/Explorer file, and VS Code Problems
-- Configurable per-context truncation for large files/diagnostic sets
-- Editor right-click actions for **Fix Selected Code**, **Explain Selected Code**, and **Add Selection to Context**
-- Explorer right-click action for **Add File to Context**
-- Runtime metadata in the sidebar (local/remote host, model, session id, SDK version)
-- Runtime settings automatically take effect after configuration changes by restarting the bridge
+The remote Linux server does **not** need a desktop environment, X11, or a browser. It only runs the HTTP service. The UI is rendered on your local computer.
 
-## Requirements
+## Remote SSH
 
-- VS Code 1.100+
-- Python 3 available on the workspace host
-- A DeepSeek API key
-- For Remote SSH: install the extension on the remote side when VS Code prompts you
+1. Connect using **Remote-SSH: Connect to Host...**.
+2. Open the project folder on the remote server.
+3. Install/enable this extension on the SSH host when VS Code prompts you.
+4. Make sure Node.js/npm are available on the remote server:
+
+   ```bash
+   node --version
+   npm --version
+   npx --version
+   ```
+
+5. Click the **DeepSeek Harness** item in the VS Code status bar, or run:
+
+   ```text
+   DeepSeek Harness: Open in VS Code
+   ```
+
+The extension declares:
+
+```json
+"extensionKind": ["workspace"]
+```
+
+so under Remote SSH the launcher itself runs inside the remote VS Code Extension Host. The `dsh` process, Bash commands, and file access therefore operate on the remote Linux workspace.
+
+## Commands
+
+- **DeepSeek Harness: Open in VS Code** — start if necessary and open the official UI in VS Code.
+- **DeepSeek Harness: Open in Browser** — start if necessary and open the forwarded UI in your normal browser.
+- **DeepSeek Harness: Start** — start the official Harness without opening the UI.
+- **DeepSeek Harness: Stop** — stop a Harness process started by this extension.
+- **DeepSeek Harness: Restart** — restart it.
+- **DeepSeek Harness: Show Logs** — show `npx` / Harness output.
+
+## Settings
+
+| Setting | Default | Purpose |
+|---|---:|---|
+| `deepseekHarness.port` | `3080` | Harness Web UI port on the workspace host |
+| `deepseekHarness.npxPath` | `npx` | `npx` executable on the local/remote workspace host |
+| `deepseekHarness.startupTimeoutMs` | `120000` | How long to wait for first startup |
+
+The first launch can take longer because `npx` may need to download the Harness package.
+
+## DeepSeek API configuration
+
+API keys, models, sessions, tools, approvals, skills, and other agent settings belong to the **official DeepSeek Harness UI**. This VS Code extension intentionally does not duplicate them.
+
+## Port forwarding and security
+
+Harness remains on the workspace host at:
+
+```text
+127.0.0.1:<port>
+```
+
+The extension asks VS Code to produce an externally reachable URI for that address using `vscode.env.asExternalUri`. In a Remote SSH session, VS Code handles the tunnel between the remote host and your local client.
+
+You do not need to expose port 3080 publicly on the Linux server.
+
+## Existing Harness process
+
+If the configured port is already listening when the extension starts, the extension reuses that service rather than launching a duplicate process.
+
+For safety, **Stop** only terminates a process owned by this extension. It will not kill an unknown process that was already listening on the configured port.
 
 ## Development
 
@@ -66,90 +151,7 @@ npm install
 npm run compile
 ```
 
-Press `F5` in VS Code to launch an Extension Development Host.
-
-## Runtime setup
-
-From the Command Palette, run:
-
-```text
-DeepSeek Harness: Install/Upgrade Runtime
-```
-
-This executes on the workspace host:
-
-```bash
-python3 -m pip install --upgrade deepseek-harness-sdk
-```
-
-Then run:
-
-```text
-DeepSeek Harness: Set API Key
-```
-
-The key is stored using VS Code SecretStorage and is only injected into the Harness bridge process environment.
-
-## Using editor context
-
-The composer exposes three context buttons:
-
-```text
-+ Selection   + File   + Problems
-```
-
-Each captured item is shown as a removable context chip before the prompt is sent. You can also use the editor and Explorer context menus.
-
-Examples:
-
-1. Select a function and choose **DeepSeek Harness: Fix Selected Code**.
-2. Select an unfamiliar block and choose **DeepSeek Harness: Explain Selected Code**.
-3. Right-click a file in Explorer and choose **DeepSeek Harness: Add File to Context**.
-4. Add **Problems** to send current workspace diagnostics with your request.
-
-Captured context is capped by `deepseekHarness.maxContextChars` per item and is marked when truncated.
-
-## Interrupting a run
-
-While the agent is running, the Send button becomes a **Stop** button. You can also run:
-
-```text
-DeepSeek Harness: Interrupt Current Run
-```
-
-The plugin terminates the current bridge/runtime process. The next prompt starts a fresh runtime process while retaining the same VS Code session id, allowing Harness persistence/recovery to handle an interrupted turn.
-
-## Remote SSH
-
-1. Connect with `Remote-SSH: Connect to Host...`.
-2. Open a folder on the remote machine.
-3. Install/enable this extension on the SSH host.
-4. Run `DeepSeek Harness: Install/Upgrade Runtime`.
-5. Configure the API key.
-6. Open the DeepSeek Harness icon in the Activity Bar.
-
-The active VS Code workspace folder becomes the Harness working directory.
-
-## Settings
-
-| Setting | Default | Purpose |
-|---|---|---|
-| `deepseekHarness.pythonPath` | `python3` | Python executable on the workspace host |
-| `deepseekHarness.model` | `deepseek-v4-pro` | Harness model |
-| `deepseekHarness.baseUrl` | `https://api.deepseek.com` | DeepSeek API base URL |
-| `deepseekHarness.maxTokens` | `49152` | Per-request max output tokens |
-| `deepseekHarness.maxContextChars` | `60000` | Maximum characters captured for each context item |
-
-## Roadmap
-
-- Native VS Code diff / Accept / Reject workflow backed by an approval-aware Harness filesystem/tool layer
-- Session history browser, explicit resume, and fork UI
-- Richer structured tool-call/result cards
-- `@file`, `@folder`, `@selection`, `@terminal`, and `@problems` text mention parser
-- Approval and permission UI
-- Direct TypeScript JSON-RPC transport to remove the Python bridge option
-- Skills, MCP, and Harness profile/preset management
-- VSIX and Marketplace release automation
+Press `F5` to launch an Extension Development Host.
 
 ## Upstream
 
