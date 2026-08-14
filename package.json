@@ -1,0 +1,84 @@
+{
+  "name": "deepseek-harness-vscode",
+  "displayName": "DeepSeek Harness",
+  "description": "DeepSeek Harness integration for VS Code with Remote SSH support.",
+  "version": "0.1.0-alpha.1",
+  "publisher": "plutoczm",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": ["Machine Learning", "Programming Languages", "Other"],
+  "keywords": ["deepseek", "harness", "agent", "coding-agent", "remote-ssh"],
+  "activationEvents": [
+    "onView:deepseekHarness.chatView",
+    "onCommand:deepseekHarness.setApiKey",
+    "onCommand:deepseekHarness.newSession"
+  ],
+  "main": "./dist/extension.js",
+  "extensionKind": ["workspace"],
+  "contributes": {
+    "commands": [
+      {"command": "deepseekHarness.setApiKey", "title": "DeepSeek Harness: Set API Key"},
+      {"command": "deepseekHarness.newSession", "title": "DeepSeek Harness: New Session"},
+      {"command": "deepseekHarness.installRuntime", "title": "DeepSeek Harness: Install/Upgrade Runtime"}
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "deepseekHarness",
+          "title": "DeepSeek Harness",
+          "icon": "media/deepseek.svg"
+        }
+      ]
+    },
+    "views": {
+      "deepseekHarness": [
+        {
+          "type": "webview",
+          "id": "deepseekHarness.chatView",
+          "name": "Agent"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "DeepSeek Harness",
+      "properties": {
+        "deepseekHarness.pythonPath": {
+          "type": "string",
+          "default": "python3",
+          "description": "Python executable used to run the DeepSeek Harness bridge on the workspace host."
+        },
+        "deepseekHarness.model": {
+          "type": "string",
+          "default": "deepseek-v4-pro",
+          "enum": ["deepseek-v4-pro", "deepseek-v4-flash"],
+          "description": "DeepSeek model used by the Harness runtime."
+        },
+        "deepseekHarness.baseUrl": {
+          "type": "string",
+          "default": "https://api.deepseek.com",
+          "description": "DeepSeek API base URL."
+        },
+        "deepseekHarness.maxTokens": {
+          "type": "number",
+          "default": 49152,
+          "minimum": 1,
+          "description": "Per-request output-token cap passed to DeepSeek Harness."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -w -p ./",
+    "package": "npm run compile && vsce package",
+    "check": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.100.0",
+    "@vscode/vsce": "^3.6.0",
+    "typescript": "^5.8.0"
+  }
+}
