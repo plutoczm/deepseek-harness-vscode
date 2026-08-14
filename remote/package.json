@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node src/server.mjs",
     "start:no-open": "node src/server.mjs --no-open",
-    "check": "node --check src/config.mjs && node --check src/ssh.mjs && node --check src/manager.mjs && node --check src/server.mjs && node --check public/app.js && node --check harness-plugin/index.js && bash -n harness-plugin/bash-env.sh && bash test/bash-env.test.sh",
+    "check": "node --check src/config.mjs && node --check src/ssh.mjs && node --check src/files.mjs && node --check src/manager.mjs && node --check src/server.mjs && node --check public/app.js && node --check harness-plugin/index.js && bash -n harness-plugin/bash-env.sh && bash test/bash-env.test.sh",
     "test": "node --test test/*.test.mjs"
   }
 }
