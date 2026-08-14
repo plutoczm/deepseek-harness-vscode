@@ -14,6 +14,7 @@
     "onView:deepseekHarness.chatView",
     "onCommand:deepseekHarness.setApiKey",
     "onCommand:deepseekHarness.newSession",
+    "onCommand:deepseekHarness.interrupt",
     "onCommand:deepseekHarness.addSelection",
     "onCommand:deepseekHarness.addCurrentFile",
     "onCommand:deepseekHarness.addProblems",
@@ -26,6 +27,7 @@
     "commands": [
       {"command": "deepseekHarness.setApiKey", "title": "DeepSeek Harness: Set API Key"},
       {"command": "deepseekHarness.newSession", "title": "DeepSeek Harness: New Session"},
+      {"command": "deepseekHarness.interrupt", "title": "DeepSeek Harness: Interrupt Current Run"},
       {"command": "deepseekHarness.installRuntime", "title": "DeepSeek Harness: Install/Upgrade Runtime"},
       {"command": "deepseekHarness.addSelection", "title": "DeepSeek Harness: Add Selection to Context"},
       {"command": "deepseekHarness.addCurrentFile", "title": "DeepSeek Harness: Add File to Context"},
