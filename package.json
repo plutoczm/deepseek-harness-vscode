@@ -1,115 +1,56 @@
 {
   "name": "deepseek-harness-vscode",
   "displayName": "DeepSeek Harness",
-  "description": "DeepSeek Harness integration for VS Code with Remote SSH support.",
-  "version": "0.2.0-alpha.1",
+  "description": "Launch the official DeepSeek Harness Web UI from VS Code, including Remote SSH workspaces.",
+  "version": "0.3.0-alpha.1",
   "publisher": "plutoczm",
   "license": "MIT",
   "engines": {
     "vscode": "^1.100.0"
   },
-  "categories": ["Machine Learning", "Programming Languages", "Other"],
-  "keywords": ["deepseek", "harness", "agent", "coding-agent", "remote-ssh"],
+  "categories": ["Machine Learning", "Other"],
+  "keywords": ["deepseek", "harness", "agent", "remote-ssh", "coding-agent"],
   "activationEvents": [
-    "onView:deepseekHarness.chatView",
-    "onCommand:deepseekHarness.setApiKey",
-    "onCommand:deepseekHarness.newSession",
-    "onCommand:deepseekHarness.interrupt",
-    "onCommand:deepseekHarness.addSelection",
-    "onCommand:deepseekHarness.addCurrentFile",
-    "onCommand:deepseekHarness.addProblems",
-    "onCommand:deepseekHarness.fixSelection",
-    "onCommand:deepseekHarness.explainSelection"
+    "onStartupFinished",
+    "onCommand:deepseekHarness.open",
+    "onCommand:deepseekHarness.openExternal",
+    "onCommand:deepseekHarness.start",
+    "onCommand:deepseekHarness.stop",
+    "onCommand:deepseekHarness.restart",
+    "onCommand:deepseekHarness.showLogs"
   ],
   "main": "./dist/extension.js",
   "extensionKind": ["workspace"],
   "contributes": {
     "commands": [
-      {"command": "deepseekHarness.setApiKey", "title": "DeepSeek Harness: Set API Key"},
-      {"command": "deepseekHarness.newSession", "title": "DeepSeek Harness: New Session"},
-      {"command": "deepseekHarness.interrupt", "title": "DeepSeek Harness: Interrupt Current Run"},
-      {"command": "deepseekHarness.installRuntime", "title": "DeepSeek Harness: Install/Upgrade Runtime"},
-      {"command": "deepseekHarness.addSelection", "title": "DeepSeek Harness: Add Selection to Context"},
-      {"command": "deepseekHarness.addCurrentFile", "title": "DeepSeek Harness: Add File to Context"},
-      {"command": "deepseekHarness.addProblems", "title": "DeepSeek Harness: Add Problems to Context"},
-      {"command": "deepseekHarness.fixSelection", "title": "DeepSeek Harness: Fix Selected Code"},
-      {"command": "deepseekHarness.explainSelection", "title": "DeepSeek Harness: Explain Selected Code"}
+      {"command": "deepseekHarness.open", "title": "DeepSeek Harness: Open in VS Code"},
+      {"command": "deepseekHarness.openExternal", "title": "DeepSeek Harness: Open in Browser"},
+      {"command": "deepseekHarness.start", "title": "DeepSeek Harness: Start"},
+      {"command": "deepseekHarness.stop", "title": "DeepSeek Harness: Stop"},
+      {"command": "deepseekHarness.restart", "title": "DeepSeek Harness: Restart"},
+      {"command": "deepseekHarness.showLogs", "title": "DeepSeek Harness: Show Logs"}
     ],
-    "menus": {
-      "editor/context": [
-        {
-          "command": "deepseekHarness.fixSelection",
-          "when": "editorHasSelection",
-          "group": "1_modification@90"
-        },
-        {
-          "command": "deepseekHarness.explainSelection",
-          "when": "editorHasSelection",
-          "group": "1_modification@91"
-        },
-        {
-          "command": "deepseekHarness.addSelection",
-          "when": "editorHasSelection",
-          "group": "1_modification@92"
-        }
-      ],
-      "explorer/context": [
-        {
-          "command": "deepseekHarness.addCurrentFile",
-          "when": "resourceScheme == file",
-          "group": "4_search@90"
-        }
-      ]
-    },
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "deepseekHarness",
-          "title": "DeepSeek Harness",
-          "icon": "media/deepseek.svg"
-        }
-      ]
-    },
-    "views": {
-      "deepseekHarness": [
-        {
-          "type": "webview",
-          "id": "deepseekHarness.chatView",
-          "name": "Agent"
-        }
-      ]
-    },
     "configuration": {
       "title": "DeepSeek Harness",
       "properties": {
-        "deepseekHarness.pythonPath": {
-          "type": "string",
-          "default": "python3",
-          "description": "Python executable used to run the DeepSeek Harness bridge on the workspace host."
-        },
-        "deepseekHarness.model": {
-          "type": "string",
-          "default": "deepseek-v4-pro",
-          "enum": ["deepseek-v4-pro", "deepseek-v4-flash"],
-          "description": "DeepSeek model used by the Harness runtime."
-        },
-        "deepseekHarness.baseUrl": {
-          "type": "string",
-          "default": "https://api.deepseek.com",
-          "description": "DeepSeek API base URL."
-        },
-        "deepseekHarness.maxTokens": {
+        "deepseekHarness.port": {
           "type": "number",
-          "default": 49152,
-          "minimum": 1,
-          "description": "Per-request output-token cap passed to DeepSeek Harness."
+          "default": 3080,
+          "minimum": 1024,
+          "maximum": 65535,
+          "description": "Port used by the official DeepSeek Harness Web UI on the workspace host."
         },
-        "deepseekHarness.maxContextChars": {
+        "deepseekHarness.npxPath": {
+          "type": "string",
+          "default": "npx",
+          "description": "Path to npx on the workspace host. For Remote SSH, this is the remote host's npx."
+        },
+        "deepseekHarness.startupTimeoutMs": {
           "type": "number",
-          "default": 60000,
-          "minimum": 1000,
-          "maximum": 500000,
-          "description": "Maximum characters captured for each VS Code context item before truncation."
+          "default": 120000,
+          "minimum": 5000,
+          "maximum": 600000,
+          "description": "Maximum time to wait for the Harness Web UI to start. First launch may take longer while npx downloads the package."
         }
       }
     }
