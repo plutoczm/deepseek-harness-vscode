@@ -7,9 +7,8 @@ import json
 import os
 import sys
 import traceback
+from importlib.metadata import PackageNotFoundError, version
 from typing import Any
-
-from deepseek_harness import DeepSeekHarness
 
 
 def emit(payload: dict[str, Any]) -> None:
@@ -24,7 +23,30 @@ def notification_payload(notification: Any) -> dict[str, Any]:
     }
 
 
+def sdk_version() -> str | None:
+    try:
+        return version("deepseek-harness-sdk")
+    except PackageNotFoundError:
+        return None
+
+
 def main() -> int:
+    try:
+        from deepseek_harness import DeepSeekHarness
+    except Exception as exc:
+        emit(
+            {
+                "type": "error",
+                "message": (
+                    "DeepSeek Harness SDK is not available in the configured Python environment. "
+                    "Run ‘DeepSeek Harness: Install/Upgrade Runtime’ or change deepseekHarness.pythonPath. "
+                    f"Original error: {exc}"
+                ),
+                "traceback": traceback.format_exc(),
+            }
+        )
+        return 2
+
     cwd = os.path.abspath(os.environ.get("DSH_VSCODE_CWD") or os.getcwd())
     session_root = os.path.abspath(
         os.environ.get("DSH_VSCODE_SESSION_ROOT") or os.path.join(cwd, ".dsh-vscode-sessions")
@@ -42,7 +64,7 @@ def main() -> int:
         session_root=session_root,
     )
 
-    emit({"type": "ready"})
+    emit({"type": "ready", "model": model, "cwd": cwd, "sdkVersion": sdk_version()})
 
     try:
         for raw_line in sys.stdin:
@@ -50,6 +72,7 @@ def main() -> int:
             if not raw_line:
                 continue
 
+            request_id: str | None = None
             try:
                 command = json.loads(raw_line)
                 command_type = command.get("type")
@@ -89,7 +112,7 @@ def main() -> int:
                 emit(
                     {
                         "type": "error",
-                        "requestId": locals().get("request_id"),
+                        "requestId": request_id,
                         "message": str(exc),
                         "traceback": traceback.format_exc(),
                     }
