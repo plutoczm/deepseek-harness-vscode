@@ -169,7 +169,9 @@ function openBrowser(url) {
 }
 
 server.listen(port, bindHost, () => {
-  const url = `http://${bindHost}:${port}`;
+  const address = server.address();
+  const actualPort = typeof address === 'object' && address ? address.port : port;
+  const url = `http://${bindHost}:${actualPort}`;
   console.log(`DeepSeek Harness Remote: ${url}`);
   console.log('SSH authentication uses your system ssh client and ~/.ssh/config.');
   openBrowser(url);
@@ -185,3 +187,5 @@ async function shutdown() {
 }
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
+
+export { manager, server };
