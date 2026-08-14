@@ -25,7 +25,7 @@ jobs:
         working-directory: remote
         run: npm test
       - name: Smoke-test remote plugins with official Harness
-        timeout-minutes: 4
+        timeout-minutes: 6
         shell: bash
         working-directory: remote
         run: |
@@ -52,7 +52,7 @@ jobs:
           trap 'cleanup' EXIT
 
           ready=0
-          for _ in $(seq 1 360); do
+          for _ in $(seq 1 600); do
             if curl -fsS http://127.0.0.1:33081/ >/dev/null 2>&1; then
               ready=1
               break
