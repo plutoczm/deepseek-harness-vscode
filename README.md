@@ -102,7 +102,7 @@ Cost is computed locally from the provider-reported token buckets. The 0.4.0 bun
 
 Unknown/custom model ids keep showing exact token telemetry but are marked **unpriced** rather than silently applying the wrong rate. When DeepSeek changes model pricing, this local table should be updated in a new app release.
 
-The observer excludes auxiliary Harness calls that carry a `purpose` such as session-title/compaction so the displayed conversation usage stays aligned with the native conversation stats semantics.
+For spend accuracy, every provider usage event carrying the Harness `sessionId` is included, including auxiliary session calls such as title or compaction work. This means the money figure is intended to represent the API work attributable to that Harness session rather than merely duplicating the visible conversation-only token row.
 
 ## Network behavior and optional local proxy fallback
 
