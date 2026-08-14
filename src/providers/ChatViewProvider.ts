@@ -39,6 +39,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             this.syncContext();
             break;
           }
+          case 'interrupt':
+            await this.interrupt();
+            break;
           case 'setApiKey':
             await vscode.commands.executeCommand('deepseekHarness.setApiKey');
             break;
@@ -97,6 +100,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   prefillPrompt(text: string): void {
     void this.view?.webview.postMessage({ type: 'prefill', text });
+  }
+
+  async interrupt(): Promise<void> {
+    await this.harness.interrupt();
+    void this.view?.webview.postMessage({ type: 'interrupted' });
+  }
+
+  refreshRuntimeInfo(): void {
+    this.syncSessionInfo();
   }
 
   resetConversation(): void {
@@ -180,6 +192,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   button { color: var(--vscode-button-foreground); background: var(--vscode-button-background); border: 0; border-radius: 4px; padding: 5px 8px; cursor: pointer; }
   button.secondary { color: var(--vscode-foreground); background: var(--vscode-button-secondaryBackground); }
   button.ghost { color: var(--vscode-descriptionForeground); background: transparent; border: 1px solid var(--vscode-panel-border); }
+  button.danger { color: var(--vscode-inputValidation-errorForeground); background: var(--vscode-inputValidation-errorBackground); border: 1px solid var(--vscode-inputValidation-errorBorder); }
   button:disabled { opacity: .55; cursor: default; }
   #messages { flex: 1; overflow-y: auto; padding: 10px; }
   .bubble { margin: 0 0 10px; padding: 8px 10px; border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -198,6 +211,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   textarea { width: 100%; min-height: 82px; resize: vertical; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border); padding: 8px; font: inherit; outline: none; }
   .composerRow { display: flex; gap: 6px; margin-top: 6px; align-items: center; }
   .composerRow .hint { flex: 1; color: var(--vscode-descriptionForeground); font-size: 11px; }
+  #stop { display: none; }
   #status { padding: 4px 10px; color: var(--vscode-descriptionForeground); font-size: 11px; min-height: 20px; border-bottom: 1px solid transparent; }
 </style>
 </head>
@@ -221,6 +235,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     <div class="composerRow">
       <span class="hint">Ctrl/Cmd + Enter to send</span>
       <button class="secondary" id="apiKey">API Key</button>
+      <button class="danger" id="stop">Stop</button>
       <button id="send">Send</button>
     </div>
   </section>
@@ -230,6 +245,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   const messages = document.getElementById('messages');
   const prompt = document.getElementById('prompt');
   const send = document.getElementById('send');
+  const stop = document.getElementById('stop');
   const status = document.getElementById('status');
   const contexts = document.getElementById('contexts');
   let busy = false;
@@ -282,6 +298,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   function setBusy(value) {
     busy = value;
     send.disabled = value;
+    send.style.display = value ? 'none' : '';
+    stop.style.display = value ? '' : 'none';
     refreshStatus(value ? 'Agent running…' : undefined);
   }
 
@@ -359,6 +377,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   prompt.addEventListener('input', persistState);
   send.addEventListener('click', submit);
+  stop.addEventListener('click', () => {
+    if (!busy) return;
+    stop.disabled = true;
+    vscode.postMessage({ type: 'interrupt' });
+  });
   prompt.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
@@ -380,11 +403,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     } else if (msg.type === 'result') {
       if (msg.finalResponse) appendEntry('assistant', msg.finalResponse);
       appendEntry('activity', 'Finished: ' + (msg.finishReason || 'idle'));
+      stop.disabled = false;
+      setBusy(false);
+    } else if (msg.type === 'interrupted') {
+      appendEntry('activity', 'Run interrupted. The next prompt will restart the Harness runtime for the same session.');
+      stop.disabled = false;
       setBusy(false);
     } else if (msg.type === 'log') {
       appendEntry('log', msg.message || 'Runtime log');
     } else if (msg.type === 'error') {
       appendEntry('error', msg.message || 'Unknown error');
+      stop.disabled = false;
       setBusy(false);
     } else if (msg.type === 'reset') {
       messages.replaceChildren();
@@ -392,6 +421,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       prompt.value = '';
       persistState();
       refreshStatus('New session: ' + String(msg.sessionId).slice(0, 8));
+      stop.disabled = false;
       setBusy(false);
     } else if (msg.type === 'ready') {
       const suffix = msg.sdkVersion ? ' · SDK ' + msg.sdkVersion : '';
