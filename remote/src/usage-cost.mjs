@@ -1,4 +1,4 @@
-const PRICE_CNY_PER_MILLION = Object.freeze({
+const V4_MODEL_PRICES = Object.freeze({
   'deepseek-v4-flash': Object.freeze({ cacheHit: 0.02, cacheMiss: 1, output: 2 }),
   'deepseek-v4-pro': Object.freeze({ cacheHit: 0.025, cacheMiss: 3, output: 6 }),
   // Compatibility aliases documented by DeepSeek as V4 Flash routes.
@@ -6,9 +6,81 @@ const PRICE_CNY_PER_MILLION = Object.freeze({
   'deepseek-reasoner': Object.freeze({ cacheHit: 0.02, cacheMiss: 1, output: 2 }),
 });
 
+// Current official pricing has no recurring off-peak window. The schedule shape
+// intentionally supports future effective-date and time-of-day rules so a later
+// DeepSeek pricing change can be represented without changing the accounting
+// pipeline. Time-window selection is anchored to request start time.
+const PRICE_SCHEDULES = Object.freeze([
+  Object.freeze({
+    id: 'deepseek-v4-standard-2026-04-24',
+    effectiveFrom: '2026-04-24T00:00:00+08:00',
+    effectiveTo: null,
+    timeZone: 'Asia/Shanghai',
+    models: V4_MODEL_PRICES,
+    windows: Object.freeze([]),
+  }),
+]);
+
 function finiteNonNegative(value) {
   const number = Number(value ?? 0);
   return Number.isFinite(number) && number > 0 ? number : 0;
+}
+
+function parseInstant(value, fallback = Date.now()) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : fallback;
+}
+
+function parseClockMinutes(value) {
+  const match = /^(\d{2}):(\d{2})$/u.exec(String(value || ''));
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour > 23 || minute > 59) return null;
+  return hour * 60 + minute;
+}
+
+function localClockMinutes(timestamp, timeZone) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(timestamp));
+  const hour = Number(parts.find((item) => item.type === 'hour')?.value ?? 0);
+  const minute = Number(parts.find((item) => item.type === 'minute')?.value ?? 0);
+  return hour * 60 + minute;
+}
+
+function windowMatches(window, timestamp, timeZone) {
+  const start = parseClockMinutes(window?.start);
+  const end = parseClockMinutes(window?.end);
+  if (start === null || end === null || start === end) return false;
+  const minute = localClockMinutes(timestamp, timeZone);
+  return start < end
+    ? minute >= start && minute < end
+    : minute >= start || minute < end;
+}
+
+function applyWindowPrice(base, window) {
+  const direct = window?.price;
+  if (direct && Number.isFinite(Number(direct.cacheHit))
+    && Number.isFinite(Number(direct.cacheMiss))
+    && Number.isFinite(Number(direct.output))) {
+    return {
+      cacheHit: Number(direct.cacheHit),
+      cacheMiss: Number(direct.cacheMiss),
+      output: Number(direct.output),
+    };
+  }
+  const multiplier = Number(window?.multiplier);
+  if (!Number.isFinite(multiplier) || multiplier < 0) return base;
+  return {
+    cacheHit: base.cacheHit * multiplier,
+    cacheMiss: base.cacheMiss * multiplier,
+    output: base.output * multiplier,
+  };
 }
 
 export function normalizeTokenUsage(raw = {}) {
@@ -33,12 +105,28 @@ export function cacheHitPercent(usage) {
   return finiteNonNegative(usage?.cacheReadTokens) / input * 100;
 }
 
-export function priceForModel(model) {
-  return PRICE_CNY_PER_MILLION[String(model || '').toLowerCase()];
+export function priceForModel(model, { at, schedules = PRICE_SCHEDULES } = {}) {
+  const key = String(model || '').toLowerCase();
+  const timestamp = parseInstant(at);
+  const schedule = [...schedules].reverse().find((candidate) => {
+    const from = parseInstant(candidate.effectiveFrom, Number.NEGATIVE_INFINITY);
+    const to = candidate.effectiveTo ? parseInstant(candidate.effectiveTo, Number.POSITIVE_INFINITY) : Number.POSITIVE_INFINITY;
+    return timestamp >= from && timestamp < to && candidate.models?.[key];
+  });
+  if (!schedule) return undefined;
+
+  const base = schedule.models[key];
+  const matchedWindow = (schedule.windows || []).find((window) =>
+    windowMatches(window, timestamp, schedule.timeZone || 'Asia/Shanghai'));
+  return {
+    ...matchedWindow ? applyWindowPrice(base, matchedWindow) : base,
+    policyId: schedule.id || 'unknown',
+    timeWindow: matchedWindow?.id || null,
+  };
 }
 
-export function usageCostCny(model, usageInput) {
-  const price = priceForModel(model);
+export function usageCostCny(model, usageInput, options = {}) {
+  const price = priceForModel(model, options);
   if (!price) return null;
   const usage = normalizeTokenUsage({
     inputTokens: usageInput?.uncachedInputTokens ?? usageInput?.inputTokens,
@@ -84,7 +172,9 @@ export function accumulateUsage(previous, payload) {
   const provider = String(payload?.provider || previous?.provider || '');
   const sessionId = String(payload?.sessionId || previous?.sessionId || '');
   const purpose = payload?.purpose ? String(payload.purpose) : null;
-  const sampleCost = usageCostCny(model, sample);
+  const requestStartedAt = payload?.startedAt || payload?.at || new Date().toISOString();
+  const price = priceForModel(model, { at: requestStartedAt });
+  const sampleCost = usageCostCny(model, sample, { at: requestStartedAt });
   const totals = addTotals(previous?.totals ?? emptyTotals(), sample);
   const knownCost = Number(previous?.costCny || 0) + (sampleCost ?? 0);
   const pricedRequests = Number(previous?.pricedRequests || 0) + (sampleCost === null ? 0 : 1);
@@ -110,13 +200,16 @@ export function accumulateUsage(previous, payload) {
       cacheHitPercent: cacheHitPercent(sample),
       costCny: sampleCost,
       pricingKnown: sampleCost !== null,
+      pricingPolicy: price?.policyId || null,
+      pricingWindow: price?.timeWindow || null,
       model,
       provider,
       purpose,
+      startedAt: requestStartedAt,
       at: updatedAt,
     },
     updatedAt,
   };
 }
 
-export { PRICE_CNY_PER_MILLION };
+export { PRICE_SCHEDULES, V4_MODEL_PRICES as PRICE_CNY_PER_MILLION };
