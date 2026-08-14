@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { promises as fs } from 'node:fs';
+import { existsSync, promises as fs } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,7 +16,11 @@ import { checkRemote, installPrivateNode22, listRemoteDirectories } from './ssh.
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const publicDirectory = path.resolve(here, '../public');
-const pdfjsDirectory = path.resolve(here, '../node_modules/pdfjs-dist');
+const pdfjsCandidates = [
+  process.resourcesPath ? path.resolve(process.resourcesPath, 'pdfjs-dist') : '',
+  path.resolve(here, '../node_modules/pdfjs-dist'),
+].filter(Boolean);
+const pdfjsDirectory = pdfjsCandidates.find((candidate) => existsSync(candidate)) || pdfjsCandidates.at(-1);
 const pluginDirectory = path.resolve(here, '../harness-plugin');
 const manager = new HarnessManager(pluginDirectory);
 const bindHost = '127.0.0.1';
