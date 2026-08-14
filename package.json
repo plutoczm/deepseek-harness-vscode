@@ -1,8 +1,8 @@
 {
   "name": "deepseek-harness-vscode",
   "displayName": "DeepSeek Harness",
-  "description": "Launch the official DeepSeek Harness Web UI from VS Code, including Remote SSH workspaces.",
-  "version": "0.3.0-alpha.1",
+  "description": "Launch the official DeepSeek Harness Web UI from VS Code with Remote SSH and per-session Python environment support.",
+  "version": "0.4.0-alpha.1",
   "publisher": "plutoczm",
   "license": "MIT",
   "repository": {
@@ -14,7 +14,7 @@
     "vscode": "^1.100.0"
   },
   "categories": ["Machine Learning", "Other"],
-  "keywords": ["deepseek", "harness", "agent", "remote-ssh", "coding-agent"],
+  "keywords": ["deepseek", "harness", "agent", "remote-ssh", "coding-agent", "python", "conda", "venv"],
   "activationEvents": [
     "onStartupFinished",
     "onCommand:deepseekHarness.open",
