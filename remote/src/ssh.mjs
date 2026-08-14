@@ -13,6 +13,8 @@ const SSH_OPTIONS = [
   '-o', 'StrictHostKeyChecking=accept-new',
 ];
 
+const PROBE_PREFIX = '__DHR__';
+
 function shellQuote(value) {
   return `'${String(value).replaceAll("'", "'\"'\"'")}'`;
 }
@@ -64,8 +66,11 @@ function runProcess(command, args, { input, timeoutMs = 30000, maxBytes = 4 * 10
 
 export async function runSsh(hostInput, script, options = {}) {
   const host = validateHost(hostInput);
+  // Environment discovery uses an interactive Bash so ~/.bashrc-managed tools such as
+  // nvm/fnm/Conda are visible. Normal launcher commands stay non-interactive.
+  const bashArgs = options.interactiveShell ? ['bash', '-i', '-s'] : ['bash', '-s'];
   try {
-    return await runProcess('ssh', [...SSH_OPTIONS, host, 'bash', '-s'], {
+    return await runProcess('ssh', [...SSH_OPTIONS, host, ...bashArgs], {
       input: script,
       timeoutMs: options.timeoutMs ?? 30000,
       maxBytes: options.maxBytes,
@@ -79,12 +84,14 @@ export async function runSsh(hostInput, script, options = {}) {
   }
 }
 
-function parseKeyValue(text) {
+function parseProbe(text) {
   const result = {};
   for (const line of String(text).split(/\r?\n/u)) {
-    const index = line.indexOf('=');
+    if (!line.startsWith(PROBE_PREFIX)) continue;
+    const payload = line.slice(PROBE_PREFIX.length);
+    const index = payload.indexOf('=');
     if (index <= 0) continue;
-    result[line.slice(0, index)] = line.slice(index + 1);
+    result[payload.slice(0, index)] = payload.slice(index + 1);
   }
   return result;
 }
@@ -93,23 +100,38 @@ export async function checkRemote(host) {
   const script = String.raw`set +e
 ROOT="\${DEEPSEEK_HARNESS_REMOTE_HOME:-$HOME/.deepseek-harness-remote}"
 find_conda() {
-  if command -v conda >/dev/null 2>&1; then command -v conda; return; fi
-  for c in "$HOME/miniconda3/bin/conda" "$HOME/anaconda3/bin/conda" "$HOME/miniforge3/bin/conda" "$HOME/mambaforge/bin/conda"; do
+  if [ -n "\${CONDA_EXE:-}" ] && [ -x "\${CONDA_EXE}" ]; then printf '%s\n' "\${CONDA_EXE}"; return; fi
+  if command -v conda >/dev/null 2>&1; then
+    _base="$(conda info --base 2>/dev/null)"
+    if [ -n "$_base" ] && [ -x "$_base/bin/conda" ]; then printf '%s\n' "$_base/bin/conda"; return; fi
+    _cmd="$(type -P conda 2>/dev/null)"
+    if [ -n "$_cmd" ]; then printf '%s\n' "$_cmd"; return; fi
+  fi
+  for c in \
+    "$HOME/miniconda3/bin/conda" "$HOME/anaconda3/bin/conda" \
+    "$HOME/miniforge3/bin/conda" "$HOME/mambaforge/bin/conda" \
+    "$HOME/miniconda/bin/conda" "$HOME/anaconda/bin/conda" \
+    "/opt/conda/bin/conda"; do
     if [ -x "$c" ]; then printf '%s\n' "$c"; return; fi
   done
 }
-printf 'hostname=%s\n' "$(hostname 2>/dev/null)"
-printf 'home=%s\n' "$HOME"
-printf 'os=%s\n' "$(uname -s 2>/dev/null)"
-printf 'arch=%s\n' "$(uname -m 2>/dev/null)"
-printf 'node=%s\n' "$(node -v 2>/dev/null)"
-printf 'npm=%s\n' "$(npm -v 2>/dev/null)"
-printf 'privateNode=%s\n' "$([ -x "$ROOT/runtime/node/bin/node" ] && "$ROOT/runtime/node/bin/node" -v 2>/dev/null)"
-printf 'python=%s\n' "$(command -v python3 2>/dev/null || command -v python 2>/dev/null)"
-printf 'conda=%s\n' "$(find_conda)"
+printf '${PROBE_PREFIX}hostname=%s\n' "$(hostname 2>/dev/null)"
+printf '${PROBE_PREFIX}home=%s\n' "$HOME"
+printf '${PROBE_PREFIX}os=%s\n' "$(uname -s 2>/dev/null)"
+printf '${PROBE_PREFIX}arch=%s\n' "$(uname -m 2>/dev/null)"
+printf '${PROBE_PREFIX}node=%s\n' "$(node -v 2>/dev/null)"
+printf '${PROBE_PREFIX}nodePath=%s\n' "$(command -v node 2>/dev/null)"
+printf '${PROBE_PREFIX}npm=%s\n' "$(npm -v 2>/dev/null)"
+printf '${PROBE_PREFIX}npmPath=%s\n' "$(command -v npm 2>/dev/null)"
+printf '${PROBE_PREFIX}npxPath=%s\n' "$(command -v npx 2>/dev/null)"
+printf '${PROBE_PREFIX}privateNode=%s\n' "$([ -x "$ROOT/runtime/node/bin/node" ] && "$ROOT/runtime/node/bin/node" -v 2>/dev/null)"
+printf '${PROBE_PREFIX}python=%s\n' "$(command -v python3 2>/dev/null || command -v python 2>/dev/null)"
+printf '${PROBE_PREFIX}conda=%s\n' "$(find_conda)"
+printf '${PROBE_PREFIX}condaBase=%s\n' "$(conda info --base 2>/dev/null)"
+exit
 `;
-  const { stdout } = await runSsh(host, script, { timeoutMs: 20000 });
-  const values = parseKeyValue(stdout);
+  const { stdout } = await runSsh(host, script, { timeoutMs: 20000, interactiveShell: true });
+  const values = parseProbe(stdout);
   return {
     ...values,
     systemNodeSupported: isSupportedRemoteNode(values.node),
@@ -135,10 +157,8 @@ esac
 BASE='https://nodejs.org/dist/latest-v22.x'
 if command -v curl >/dev/null 2>&1; then
   INDEX="$(curl -fsSL "$BASE/")"
-  FETCH='curl -fL --retry 2 -o'
 elif command -v wget >/dev/null 2>&1; then
   INDEX="$(wget -qO- "$BASE/")"
-  FETCH='wget -qO'
 else
   echo 'Neither curl nor wget is available on the remote host.' >&2
   exit 3
@@ -150,7 +170,7 @@ if [ -z "$FILE" ]; then
 fi
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-if [ "\${FETCH%% *}" = curl ]; then
+if command -v curl >/dev/null 2>&1; then
   curl -fL --retry 2 -o "$TMP/node.tar.xz" "$BASE/$FILE"
 else
   wget -qO "$TMP/node.tar.xz" "$BASE/$FILE"
@@ -217,15 +237,42 @@ export async function deployPlugin(host, pluginDirectory) {
 export async function resolveRemoteNode(host, { installIfMissing = true } = {}) {
   let info = await checkRemote(host);
   if (info.privateNodeSupported) {
-    return { path: '$HOME/.deepseek-harness-remote/runtime/node/bin', version: info.privateNode, source: 'private', info };
+    return {
+      path: '$HOME/.deepseek-harness-remote/runtime/node/bin',
+      version: info.privateNode,
+      source: 'private',
+      condaPath: info.conda || '',
+      info,
+    };
   }
   if (info.systemNodeSupported) {
-    return { path: '', version: info.node, source: 'system', info };
+    const runtimeBin = info.nodePath?.startsWith('/') ? path.posix.dirname(info.nodePath) : '';
+    return {
+      path: runtimeBin,
+      version: info.node,
+      source: runtimeBin && runtimeBin !== '/usr/bin' && runtimeBin !== '/usr/local/bin' ? 'shell' : 'system',
+      condaPath: info.conda || '',
+      info,
+    };
   }
-  if (!installIfMissing) return { path: undefined, version: info.node || info.privateNode, source: 'missing', info };
+  if (!installIfMissing) {
+    return {
+      path: undefined,
+      version: info.node || info.privateNode,
+      source: 'missing',
+      condaPath: info.conda || '',
+      info,
+    };
+  }
   const version = await installPrivateNode22(host);
   info = await checkRemote(host);
-  return { path: '$HOME/.deepseek-harness-remote/runtime/node/bin', version, source: 'private', info };
+  return {
+    path: '$HOME/.deepseek-harness-remote/runtime/node/bin',
+    version,
+    source: 'private',
+    condaPath: info.conda || '',
+    info,
+  };
 }
 
 export async function findRemoteFreePort(host, runtimeBin = '') {
@@ -250,14 +297,18 @@ export function findLocalFreePort() {
   });
 }
 
-export function createHarnessTunnel({ host, workspace, localPort, remotePort, runtimeBin, onLog, instanceId }) {
+export function createHarnessTunnel({ host, workspace, localPort, remotePort, runtimeBin, condaPath, onLog, instanceId }) {
   validateHost(host);
   validateRemotePath(workspace);
   const runtimePrefix = runtimeBin ? `export PATH="${runtimeBin}:$PATH"` : ':';
+  const condaBin = condaPath?.startsWith('/') ? path.posix.dirname(condaPath) : '';
+  const condaPrefix = condaBin
+    ? `export PATH=${shellQuote(condaBin)}:"$PATH"`
+    : `for CONDA_BIN in "$HOME/miniconda3/bin" "$HOME/anaconda3/bin" "$HOME/miniforge3/bin" "$HOME/mambaforge/bin" "$HOME/miniconda/bin" "$HOME/anaconda/bin" "/opt/conda/bin"; do\n  if [ -x "$CONDA_BIN/conda" ]; then export PATH="$CONDA_BIN:$PATH"; break; fi\ndone`;
   const workspaceQuoted = shellQuote(workspace);
   const remotePortQuoted = shellQuote(String(remotePort));
   const instanceQuoted = shellQuote(instanceId);
-  const script = `set -euo pipefail\nROOT="\${DEEPSEEK_HARNESS_REMOTE_HOME:-$HOME/.deepseek-harness-remote}"\nPLUGIN="$ROOT/plugin"\n${runtimePrefix}\nfor CONDA_BIN in "$HOME/miniconda3/bin" "$HOME/anaconda3/bin" "$HOME/miniforge3/bin" "$HOME/mambaforge/bin"; do\n  if [ -x "$CONDA_BIN/conda" ]; then export PATH="$CONDA_BIN:$PATH"; break; fi\ndone\nexport DSH_HOME="\${DSH_HOME:-$HOME/.dsh}"\nPACKAGE_DIR="$DSH_HOME/profiles/node_modules/deepseek-harness-remote-session-env"\nmkdir -p "$PACKAGE_DIR" "$ROOT/session-env" "$ROOT/logs"\ncp "$PLUGIN/index.js" "$PLUGIN/package.json" "$PACKAGE_DIR/"\nexport DEEPSEEK_HARNESS_PARENT_BASH_ENV="\${BASH_ENV:-}"\nexport BASH_ENV="$PLUGIN/bash-env.sh"\nexport DEEPSEEK_HARNESS_SESSION_ENV_DIR="$ROOT/session-env"\nexport DEEPSEEK_HARNESS_BASE_PATH="$PATH"\nexport DEEPSEEK_HARNESS_REMOTE_INSTANCE=${instanceQuoted}\ncd ${workspaceQuoted}\necho "[remote] workspace=$(pwd -P)"\necho "[remote] node=$(node -v)"\necho "[remote] harness_port=${remotePort}"\nexec npx --yes @deepseek-ai/dsh --profile web --patch "$PLUGIN/cordis.patch.yml" --port ${remotePortQuoted}\n`;
+  const script = `set -euo pipefail\nROOT="\${DEEPSEEK_HARNESS_REMOTE_HOME:-$HOME/.deepseek-harness-remote}"\nPLUGIN="$ROOT/plugin"\n${runtimePrefix}\n${condaPrefix}\nexport DSH_HOME="\${DSH_HOME:-$HOME/.dsh}"\nPACKAGE_DIR="$DSH_HOME/profiles/node_modules/deepseek-harness-remote-session-env"\nmkdir -p "$PACKAGE_DIR" "$ROOT/session-env" "$ROOT/logs"\ncp "$PLUGIN/index.js" "$PLUGIN/package.json" "$PACKAGE_DIR/"\nexport DEEPSEEK_HARNESS_PARENT_BASH_ENV="\${BASH_ENV:-}"\nexport BASH_ENV="$PLUGIN/bash-env.sh"\nexport DEEPSEEK_HARNESS_SESSION_ENV_DIR="$ROOT/session-env"\nexport DEEPSEEK_HARNESS_BASE_PATH="$PATH"\nexport DEEPSEEK_HARNESS_REMOTE_INSTANCE=${instanceQuoted}\ncd ${workspaceQuoted}\necho "[remote] workspace=$(pwd -P)"\necho "[remote] node=$(node -v)"\necho "[remote] node_path=$(command -v node)"\necho "[remote] conda=$(command -v conda 2>/dev/null || true)"\necho "[remote] harness_port=${remotePort}"\nexec npx --yes @deepseek-ai/dsh --profile web --patch "$PLUGIN/cordis.patch.yml" --port ${remotePortQuoted}\n`;
 
   const child = spawn('ssh', [
     ...SSH_OPTIONS,
