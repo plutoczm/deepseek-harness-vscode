@@ -37,15 +37,21 @@ jobs:
         run: |
           $required = @(
             'dist/win-unpacked/resources/pdfjs-dist/build/pdf.mjs',
-            'dist/win-unpacked/resources/pdfjs-dist/build/pdf.worker.mjs',
-            'dist/win-unpacked/resources/pdfjs-dist/cmaps/UniJIS-UTF16-H.bcmap',
-            'dist/win-unpacked/resources/pdfjs-dist/standard_fonts/FoxitSans.pfb'
+            'dist/win-unpacked/resources/pdfjs-dist/build/pdf.worker.mjs'
           )
           foreach ($path in $required) {
             if (!(Test-Path $path)) { throw "Missing packaged PDF.js asset: $path" }
           }
-          $wasm = Get-ChildItem 'dist/win-unpacked/resources/pdfjs-dist/wasm' -Filter '*.wasm' -ErrorAction Stop
-          if ($wasm.Count -lt 1) { throw 'No packaged PDF.js WASM assets found.' }
+          $assetDirs = @(
+            'dist/win-unpacked/resources/pdfjs-dist/cmaps',
+            'dist/win-unpacked/resources/pdfjs-dist/standard_fonts',
+            'dist/win-unpacked/resources/pdfjs-dist/wasm'
+          )
+          foreach ($dir in $assetDirs) {
+            if (!(Test-Path $dir)) { throw "Missing packaged PDF.js asset directory: $dir" }
+            $files = Get-ChildItem $dir -File -Recurse -ErrorAction Stop
+            if ($files.Count -lt 1) { throw "Packaged PDF.js asset directory is empty: $dir" }
+          }
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
