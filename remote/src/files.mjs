@@ -4,6 +4,7 @@ import { runSsh } from './ssh.mjs';
 
 const MAX_TEXT_PREVIEW_BYTES = 512 * 1024;
 const MAX_IMAGE_PREVIEW_BYTES = 4 * 1024 * 1024;
+const MAX_DIRECTORY_ENTRIES = 5000;
 
 const IMAGE_MIME = new Map([
   ['.png', 'image/png'],
@@ -18,8 +19,8 @@ function shellQuote(value) {
   return `'${String(value).replaceAll("'", "'\"'\"'")}'`;
 }
 
-function entryType(value) {
-  if (value === 'd') return 'directory';
+function entryType(value, targetType) {
+  if (value === 'd' || (value === 'l' && targetType === 'd')) return 'directory';
   if (value === 'f') return 'file';
   if (value === 'l') return 'symlink';
   return 'other';
@@ -40,21 +41,23 @@ export async function listRemoteFiles(hostInput, remotePathInput = '/') {
   const host = validateHost(hostInput);
   const remotePath = validateRemotePath(remotePathInput || '/');
   const quoted = shellQuote(remotePath);
-  const script = `set -e\nTARGET=${quoted}\nif [ ! -d "$TARGET" ]; then echo "Remote directory does not exist or is not accessible: $TARGET" >&2; exit 2; fi\nCURRENT="$(cd "$TARGET" && pwd -P)"\nprintf '__CURRENT__\\0%s\\0' "$CURRENT"\nfind "$CURRENT" -mindepth 1 -maxdepth 1 -printf '%y\\0%s\\0%T@\\0%f\\0%p\\0' 2>/dev/null\n`;
+  const fieldLimit = MAX_DIRECTORY_ENTRIES * 6;
+  const script = `set -e\nTARGET=${quoted}\nif [ ! -d "$TARGET" ]; then echo "Remote directory does not exist or is not accessible: $TARGET" >&2; exit 2; fi\nCURRENT="$(cd "$TARGET" && pwd -P)"\nprintf '__CURRENT__\\0%s\\0' "$CURRENT"\nfind "$CURRENT" -mindepth 1 -maxdepth 1 -printf '%y\\0%Y\\0%s\\0%T@\\0%f\\0%p\\0' 2>/dev/null | head -z -n ${fieldLimit}\n`;
   const { stdout } = await runSsh(host, script, { timeoutMs: 30000, maxBytes: 8 * 1024 * 1024 });
   const fields = stdout.split('\0');
   if (fields[0] !== '__CURRENT__') throw new Error('Could not parse remote directory listing.');
   const current = fields[1] || remotePath;
   const entries = [];
-  for (let index = 2; index + 4 < fields.length; index += 5) {
-    const [rawType, rawSize, rawMtime, name, entryPath] = fields.slice(index, index + 5);
+  for (let index = 2; index + 5 < fields.length; index += 6) {
+    const [rawType, rawTargetType, rawSize, rawMtime, name, entryPath] = fields.slice(index, index + 6);
     if (!name || !entryPath) continue;
-    const type = entryType(rawType);
+    const type = entryType(rawType, rawTargetType);
     const seconds = Number(rawMtime);
     entries.push({
       name,
       path: entryPath,
       type,
+      symlink: rawType === 'l',
       size: Number(rawSize) || 0,
       mtime: Number.isFinite(seconds) ? new Date(seconds * 1000).toISOString() : undefined,
     });
@@ -64,7 +67,14 @@ export async function listRemoteFiles(hostInput, remotePathInput = '/') {
     return rank(left) - rank(right) || left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: 'base' });
   });
   const parent = current === '/' ? '/' : path.posix.dirname(current);
-  return { host, current, parent, entries };
+  return {
+    host,
+    current,
+    parent,
+    entries,
+    limited: entries.length >= MAX_DIRECTORY_ENTRIES,
+    limit: MAX_DIRECTORY_ENTRIES,
+  };
 }
 
 export async function readRemoteFile(hostInput, remotePathInput) {
