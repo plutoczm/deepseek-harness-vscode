@@ -2,8 +2,8 @@ import path from 'node:path';
 import { validateHost, validateRemotePath } from './config.mjs';
 import { runSsh } from './ssh.mjs';
 
-const MAX_TEXT_PREVIEW_BYTES = 512 * 1024;
-const MAX_IMAGE_PREVIEW_BYTES = 4 * 1024 * 1024;
+const MAX_TEXT_PREVIEW_BYTES = 1 * 1024 * 1024;
+const MAX_IMAGE_PREVIEW_BYTES = 15 * 1024 * 1024;
 const MAX_DIRECTORY_ENTRIES = 5000;
 
 const IMAGE_MIME = new Map([
