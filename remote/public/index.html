@@ -7,6 +7,7 @@
   <title>DeepSeek Harness Remote</title>
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/files.css">
+  <link rel="stylesheet" href="/pdf-viewer.css">
   <link rel="stylesheet" href="/workspace-picker.css">
   <link rel="stylesheet" href="/ui-polish.css">
   <link rel="stylesheet" href="/network-options.css">
@@ -145,7 +146,7 @@
           <div>
             <span class="section-kicker">REMOTE SERVER</span>
             <h2>远程文件</h2>
-            <p>通过当前 SSH 用户浏览服务器文件。这里仅提供查看和预览，修改代码仍交给 Harness。</p>
+            <p>通过当前 SSH 用户浏览服务器文件。文本、图片和 PDF 可直接预览，修改代码仍交给 Harness。</p>
           </div>
           <div class="server-chip"><span class="status-dot running"></span><span id="files-host-label">未选择服务器</span></div>
         </div>
@@ -185,7 +186,7 @@
             <div id="file-preview" class="file-preview empty-preview">
               <div class="preview-empty-icon">⌘</div>
               <strong>选择一个文件</strong>
-              <span>文本文件和常见图片可以直接预览。</span>
+              <span>文本、常见图片和 PDF 可以直接预览。</span>
             </div>
           </aside>
         </div>
@@ -199,6 +200,7 @@
   </main>
   <script src="/network-options.js"></script>
   <script type="module" src="/app.js"></script>
+  <script type="module" src="/pdf-preview.js"></script>
   <script type="module" src="/workspace-picker.js"></script>
   <script type="module" src="/ui-polish.js"></script>
 </body>

@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { validateHost, validateRemotePath } from './config.mjs';
 import { runSsh } from './ssh.mjs';
@@ -14,6 +15,16 @@ const IMAGE_MIME = new Map([
   ['.webp', 'image/webp'],
   ['.bmp', 'image/bmp'],
 ]);
+
+const PDF_MIME = 'application/pdf';
+const STREAM_SSH_OPTIONS = [
+  '-o', 'BatchMode=yes',
+  '-o', 'ConnectTimeout=10',
+  '-o', 'ServerAliveInterval=20',
+  '-o', 'ServerAliveCountMax=3',
+  '-o', 'StrictHostKeyChecking=accept-new',
+  '-o', 'ClearAllForwardings=yes',
+];
 
 function shellQuote(value) {
   return `'${String(value).replaceAll("'", "'\"'\"'")}'`;
@@ -77,10 +88,87 @@ export async function listRemoteFiles(hostInput, remotePathInput = '/') {
   };
 }
 
+export async function remoteFileMetadata(hostInput, remotePathInput) {
+  const host = validateHost(hostInput);
+  const remotePath = validateRemotePath(remotePathInput);
+  const quoted = shellQuote(remotePath);
+  const script = `set -e\nFILE=${quoted}\nif [ ! -f "$FILE" ]; then echo "Remote file does not exist or is not a regular file: $FILE" >&2; exit 2; fi\nSIZE="$(stat -c '%s' "$FILE" 2>/dev/null || wc -c < "$FILE" | tr -d ' ')"\nMTIME="$(stat -c '%Y' "$FILE" 2>/dev/null || printf '0')"\nprintf '__SIZE__=%s\\n__MTIME__=%s\\n' "$SIZE" "$MTIME"\n`;
+  const { stdout } = await runSsh(host, script, { timeoutMs: 20000, maxBytes: 4096 });
+  const size = Number(/^__SIZE__=(\d+)$/mu.exec(stdout)?.[1]);
+  const mtimeSeconds = Number(/^__MTIME__=(\d+)$/mu.exec(stdout)?.[1]);
+  if (!Number.isFinite(size) || size < 0) throw new Error('Could not determine remote file size.');
+  return {
+    host,
+    path: remotePath,
+    name: path.posix.basename(remotePath),
+    size,
+    mtime: Number.isFinite(mtimeSeconds) && mtimeSeconds > 0
+      ? new Date(mtimeSeconds * 1000).toISOString()
+      : undefined,
+    extension: path.posix.extname(remotePath).toLowerCase(),
+  };
+}
+
+export function parseHttpByteRange(header, size) {
+  const total = Number(size);
+  if (!Number.isSafeInteger(total) || total < 0) return null;
+  if (!header) return total === 0 ? { start: 0, end: -1, length: 0, partial: false } : { start: 0, end: total - 1, length: total, partial: false };
+  const match = /^bytes=(\d*)-(\d*)$/iu.exec(String(header).trim());
+  if (!match || (match[1] === '' && match[2] === '')) return null;
+
+  let start;
+  let end;
+  if (match[1] === '') {
+    const suffix = Number(match[2]);
+    if (!Number.isSafeInteger(suffix) || suffix <= 0 || total === 0) return null;
+    start = Math.max(0, total - suffix);
+    end = total - 1;
+  } else {
+    start = Number(match[1]);
+    if (!Number.isSafeInteger(start) || start < 0 || start >= total) return null;
+    end = match[2] === '' ? total - 1 : Number(match[2]);
+    if (!Number.isSafeInteger(end) || end < start) return null;
+    end = Math.min(end, total - 1);
+  }
+  return { start, end, length: end - start + 1, partial: true };
+}
+
+export function openRemoteFileStream(hostInput, remotePathInput, { start = 0, length } = {}) {
+  const host = validateHost(hostInput);
+  const remotePath = validateRemotePath(remotePathInput);
+  const offset = Number(start);
+  const count = Number(length);
+  if (!Number.isSafeInteger(offset) || offset < 0) throw new Error('Invalid remote stream offset.');
+  if (!Number.isSafeInteger(count) || count < 0) throw new Error('Invalid remote stream length.');
+
+  const quoted = shellQuote(remotePath);
+  const script = count === 0
+    ? `set -e\nFILE=${quoted}\n[ -f "$FILE" ] || exit 2\nexit 0\n`
+    : offset === 0
+      ? `set -e\nFILE=${quoted}\n[ -f "$FILE" ] || exit 2\nhead -c ${count} "$FILE"\n`
+      : `set -e\nFILE=${quoted}\n[ -f "$FILE" ] || exit 2\ntail -c +${offset + 1} "$FILE" | head -c ${count}\n`;
+  const child = spawn('ssh', [...STREAM_SSH_OPTIONS, host, 'bash', '-s'], {
+    windowsHide: true,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  child.stdin.end(script);
+  return child;
+}
+
 export async function readRemoteFile(hostInput, remotePathInput) {
   const host = validateHost(hostInput);
   const remotePath = validateRemotePath(remotePathInput);
   const extension = path.posix.extname(remotePath).toLowerCase();
+
+  if (extension === '.pdf') {
+    const metadata = await remoteFileMetadata(host, remotePath);
+    return {
+      ...metadata,
+      kind: 'pdf',
+      mime: PDF_MIME,
+    };
+  }
+
   const imageMime = IMAGE_MIME.get(extension);
   const maxBytes = imageMime ? MAX_IMAGE_PREVIEW_BYTES : MAX_TEXT_PREVIEW_BYTES;
   const quoted = shellQuote(remotePath);
