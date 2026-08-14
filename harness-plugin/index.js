@@ -200,7 +200,7 @@ function activationScript(environment) {
       'unset CONDA_PREFIX CONDA_DEFAULT_ENV CONDA_PROMPT_MODIFIER CONDA_SHLVL',
       'unset PYTHONHOME',
       `export VIRTUAL_ENV=${root}`,
-      `export PATH=${bin}:"${DEEPSEEK_HARNESS_BASE_PATH:-$PATH}"`,
+      `export PATH=${bin}:"\${DEEPSEEK_HARNESS_BASE_PATH:-$PATH}"`,
       `export DEEPSEEK_HARNESS_ENV_NAME=${label}`,
       '',
     ].join('\n');
@@ -232,7 +232,7 @@ function activationScript(environment) {
     lines.push(
       `export CONDA_PREFIX=${root}`,
       `export CONDA_DEFAULT_ENV=${shortName}`,
-      `export PATH=${bin}:"${PATH}"`,
+      `export PATH=${bin}:"\${PATH}"`,
       `export DEEPSEEK_HARNESS_ENV_NAME=${label}`,
       '',
     );
