@@ -1,6 +1,14 @@
 import * as vscode from 'vscode';
 import { ChildProcess, spawn } from 'node:child_process';
+import { promises as fs } from 'node:fs';
 import * as net from 'node:net';
+import * as os from 'node:os';
+import * as path from 'node:path';
+
+interface SessionEnvironmentIntegration {
+  readonly env: NodeJS.ProcessEnv;
+  readonly patchArgs: string[];
+}
 
 class HarnessLauncher implements vscode.Disposable {
   private child?: ChildProcess;
@@ -10,7 +18,7 @@ class HarnessLauncher implements vscode.Disposable {
   private readonly output = vscode.window.createOutputChannel('DeepSeek Harness');
   private readonly statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
 
-  constructor() {
+  constructor(private readonly context: vscode.ExtensionContext) {
     this.statusBar.command = 'deepseekHarness.open';
     this.updateStatus();
     this.statusBar.show();
@@ -34,12 +42,24 @@ class HarnessLauncher implements vscode.Disposable {
       this.state = 'running';
       this.updateStatus('Using an existing service on the configured port');
       this.output.appendLine(`[launcher] Reusing service already listening on 127.0.0.1:${port}.`);
+      this.output.appendLine(
+        '[launcher] Note: per-session /env integration is only guaranteed when Harness was started by this extension.',
+      );
       return;
     }
 
     const workspace = this.workspacePath();
     const npx = this.npxCommand();
-    const args = ['--yes', '@deepseek-ai/dsh', '--profile', 'web', '--port', String(port)];
+    const integration = await this.prepareSessionEnvironmentIntegration();
+    const args = [
+      '--yes',
+      '@deepseek-ai/dsh',
+      '--profile',
+      'web',
+      ...integration.patchArgs,
+      '--port',
+      String(port),
+    ];
 
     this.state = 'starting';
     this.updateStatus();
@@ -50,7 +70,7 @@ class HarnessLauncher implements vscode.Disposable {
     let spawnError: Error | undefined;
     const child = spawn(npx, args, {
       cwd: workspace,
-      env: process.env,
+      env: integration.env,
       detached: process.platform !== 'win32',
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -84,6 +104,9 @@ class HarnessLauncher implements vscode.Disposable {
       this.state = 'running';
       this.updateStatus();
       this.output.appendLine(`[launcher] Harness Web UI is ready on 127.0.0.1:${port}.`);
+      if (process.platform !== 'win32') {
+        this.output.appendLine('[launcher] Per-session Python environments are available through /env.');
+      }
     } catch (error) {
       this.state = 'error';
       this.updateStatus();
@@ -183,6 +206,55 @@ class HarnessLauncher implements vscode.Disposable {
     return configured || (process.platform === 'win32' ? 'npx.cmd' : 'npx');
   }
 
+  private async prepareSessionEnvironmentIntegration(): Promise<SessionEnvironmentIntegration> {
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    if (process.platform === 'win32') {
+      this.output.appendLine(
+        '[launcher] Per-session /env activation currently targets Bash on Linux/macOS; Windows launcher remains unchanged.',
+      );
+      return { env, patchArgs: [] };
+    }
+
+    const sourceDir = path.join(this.context.extensionUri.fsPath, 'harness-plugin');
+    const packageTarget = path.join(
+      this.dshHome(),
+      'profiles',
+      'node_modules',
+      'deepseek-harness-vscode-session-env',
+    );
+    await fs.mkdir(packageTarget, { recursive: true });
+    for (const filename of ['package.json', 'index.js']) {
+      await fs.copyFile(path.join(sourceDir, filename), path.join(packageTarget, filename));
+    }
+
+    const sessionEnvDir = path.join(this.context.globalStorageUri.fsPath, 'session-env');
+    await fs.mkdir(sessionEnvDir, { recursive: true, mode: 0o700 });
+
+    const bashEnv = path.join(sourceDir, 'bash-env.sh');
+    const patch = path.join(sourceDir, 'cordis.patch.yml');
+    const inheritedBashEnv = process.env.BASH_ENV?.trim();
+
+    env.BASH_ENV = bashEnv;
+    env.DEEPSEEK_HARNESS_SESSION_ENV_DIR = sessionEnvDir;
+    env.DEEPSEEK_HARNESS_BASE_PATH = process.env.PATH ?? '';
+    delete env.DEEPSEEK_HARNESS_PARENT_BASH_ENV;
+    if (inheritedBashEnv && path.resolve(inheritedBashEnv) !== path.resolve(bashEnv)) {
+      env.DEEPSEEK_HARNESS_PARENT_BASH_ENV = inheritedBashEnv;
+    }
+
+    this.output.appendLine(`[launcher] Session environment state: ${sessionEnvDir}`);
+    this.output.appendLine(`[launcher] Harness session environment plugin: ${packageTarget}`);
+    return { env, patchArgs: ['--patch', patch] };
+  }
+
+  private dshHome(): string {
+    const configured = process.env.DSH_HOME?.trim();
+    if (!configured) return path.join(os.homedir(), '.dsh');
+    if (configured === '~') return os.homedir();
+    if (configured.startsWith('~/')) return path.join(os.homedir(), configured.slice(2));
+    return path.resolve(configured);
+  }
+
   private updateStatus(detail?: string): void {
     const remote = vscode.env.remoteName ? `Remote: ${vscode.env.remoteName}` : 'Local';
     const port = this.port();
@@ -204,6 +276,7 @@ class HarnessLauncher implements vscode.Disposable {
     this.statusBar.tooltip = [
       `DeepSeek Harness · ${remote}`,
       `Workspace port: ${port}`,
+      process.platform !== 'win32' ? 'Per-session Python environment: /env' : undefined,
       detail,
       'Click to start/open the official Harness Web UI.',
     ]
@@ -325,7 +398,7 @@ function errorText(error: unknown): string {
 }
 
 export function activate(context: vscode.ExtensionContext): void {
-  const launcher = new HarnessLauncher();
+  const launcher = new HarnessLauncher(context);
 
   const register = (command: string, action: () => Promise<void> | void) => {
     context.subscriptions.push(
