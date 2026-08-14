@@ -5,16 +5,14 @@ const MARKER = '__DHR_USAGE__';
 
 function emitUsage(options, usage) {
   const sessionId = options?.sessionId ? String(options.sessionId) : '';
-  // Keep this aligned with the native conversation tokenUsage projection:
-  // auxiliary title/compaction calls are not part of the visible conversation
-  // stats line, so they are intentionally excluded here too.
-  if (!sessionId || options?.purpose) return;
+  if (!sessionId) return;
 
   const payload = {
     version: 1,
     sessionId,
     provider: String(options.provider || ''),
     model: String(options.model || ''),
+    purpose: options?.purpose ? String(options.purpose) : null,
     usage: {
       inputTokens: Number(usage?.inputTokens || 0),
       outputTokens: Number(usage?.outputTokens || 0),
