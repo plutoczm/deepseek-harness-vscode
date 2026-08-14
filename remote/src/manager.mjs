@@ -39,7 +39,7 @@ export class HarnessManager {
         localProxyHost: instance.network.localProxyHost,
         localProxyPort: instance.network.localProxyPort,
         remoteProxyPort: instance.network.remoteProxyPort,
-      } : undefined,
+      } : { enabled: false, mode: 'remote-direct' },
     };
   }
 
@@ -90,7 +90,7 @@ export class HarnessManager {
     return result;
   }
 
-  async launch({ host: hostInput, workspace: workspaceInput, installRuntime = true }) {
+  async launch({ host: hostInput, workspace: workspaceInput, installRuntime = true, enableLocalProxy = false }) {
     const host = validateHost(hostInput);
     const workspace = validateRemotePath(workspaceInput);
     const instance = {
@@ -100,6 +100,7 @@ export class HarnessManager {
       status: 'preparing',
       logs: '',
       createdAt: new Date().toISOString(),
+      network: { enabled: false, mode: 'remote-direct' },
     };
     this.instances.set(instance.id, instance);
 
@@ -132,16 +133,21 @@ export class HarnessManager {
         this.appendLog(instance, `[billing] Balance probe failed: ${error instanceof Error ? error.message : String(error)}\n`);
       }
 
-      try {
-        instance.network = await startLocalProxyBridge({
-          host,
-          instanceId: instance.id,
-          runtimeBin: runtime.path,
-          onLog: (chunk) => this.appendLog(instance, chunk),
-        });
-      } catch (error) {
-        instance.network = { enabled: false, mode: 'remote-direct', localProxyHost: '127.0.0.1', localProxyPort: 7890 };
-        this.appendLog(instance, `[network] Local VPN bridge was not enabled: ${error instanceof Error ? error.message : String(error)}\n`);
+      if (enableLocalProxy) {
+        try {
+          instance.network = await startLocalProxyBridge({
+            host,
+            instanceId: instance.id,
+            runtimeBin: runtime.path,
+            onLog: (chunk) => this.appendLog(instance, chunk),
+          });
+        } catch (error) {
+          instance.network = { enabled: false, mode: 'remote-direct', localProxyHost: '127.0.0.1', localProxyPort: 7890 };
+          this.appendLog(instance, `[network] Requested local proxy bridge could not be enabled: ${error instanceof Error ? error.message : String(error)}\n`);
+          this.appendLog(instance, '[network] Falling back to the remote server network.\n');
+        }
+      } else {
+        this.appendLog(instance, '[network] Remote-direct mode. Local VPN/proxy bridge is disabled for this instance.\n');
       }
 
       const [localPort, remotePort] = await Promise.all([
@@ -187,7 +193,7 @@ export class HarnessManager {
       this.appendLog(instance, `[launcher] ERROR: ${instance.error}\n`);
       if (instance.child?.exitCode === null) instance.child.kill('SIGTERM');
       if (instance.network?.child?.exitCode === null) instance.network.child.kill('SIGTERM');
-      await clearRemoteProxyEnvironment(instance.host, instance.id).catch(() => undefined);
+      if (instance.network?.enabled) await clearRemoteProxyEnvironment(instance.host, instance.id).catch(() => undefined);
       throw Object.assign(new Error(instance.error), { instanceId: instance.id });
     }
   }
@@ -207,7 +213,7 @@ export class HarnessManager {
     }
     const proxyChild = instance.network?.child;
     if (proxyChild && proxyChild.exitCode === null) proxyChild.kill('SIGTERM');
-    await clearRemoteProxyEnvironment(instance.host, instance.id).catch(() => undefined);
+    if (instance.network?.enabled) await clearRemoteProxyEnvironment(instance.host, instance.id).catch(() => undefined);
     instance.status = 'stopped';
     this.appendLog(instance, '[launcher] Stopped.\n');
     return true;
