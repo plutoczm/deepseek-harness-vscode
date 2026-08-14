@@ -226,7 +226,14 @@ async function scpFile(host, localPath) {
 
 export async function deployPlugin(host, pluginDirectory) {
   await ensureRemotePluginDirectory(host);
-  for (const filename of ['index.js', 'package.json', 'cordis.patch.yml', 'bash-env.sh']) {
+  for (const filename of [
+    'index.js',
+    'package.json',
+    'cordis.patch.yml',
+    'bash-env.sh',
+    'usage-cost.js',
+    'usage-package.json',
+  ]) {
     const localPath = path.join(pluginDirectory, filename);
     await fs.access(localPath);
     await scpFile(host, localPath);
@@ -312,7 +319,7 @@ function normalizeSshStderr(chunk, onLog) {
   if (kept.length) onLog?.(`${kept.join('\n')}\n`);
 }
 
-export function createHarnessTunnel({ host, workspace, localPort, remotePort, runtimeBin, condaPath, onLog, instanceId }) {
+export function createHarnessTunnel({ host, workspace, localPort, remotePort, runtimeBin, condaPath, onLog, onStdout, instanceId }) {
   validateHost(host);
   validateRemotePath(workspace);
 
@@ -325,7 +332,7 @@ export function createHarnessTunnel({ host, workspace, localPort, remotePort, ru
   const workspaceQuoted = shellQuote(workspace);
   const remotePortQuoted = shellQuote(String(remotePort));
   const instanceQuoted = shellQuote(instanceId);
-  const script = `set -euo pipefail\nROOT="\${DEEPSEEK_HARNESS_REMOTE_HOME:-$HOME/.deepseek-harness-remote}"\nPLUGIN="$ROOT/plugin"\n${condaPrefix}\n${runtimePrefix}\nexport DSH_HOME="\${DSH_HOME:-$HOME/.dsh}"\nPACKAGE_DIR="$DSH_HOME/profiles/node_modules/deepseek-harness-remote-session-env"\nmkdir -p "$PACKAGE_DIR" "$ROOT/session-env" "$ROOT/logs"\ncp "$PLUGIN/index.js" "$PLUGIN/package.json" "$PACKAGE_DIR/"\nexport DEEPSEEK_HARNESS_PARENT_BASH_ENV="\${BASH_ENV:-}"\nexport BASH_ENV="$PLUGIN/bash-env.sh"\nexport DEEPSEEK_HARNESS_SESSION_ENV_DIR="$ROOT/session-env"\nexport DEEPSEEK_HARNESS_BASE_PATH="$PATH"\nexport DEEPSEEK_HARNESS_REMOTE_INSTANCE=${instanceQuoted}\ncd ${workspaceQuoted}\necho "[remote] workspace=$(pwd -P)"\necho "[remote] node=$(node -v)"\necho "[remote] node_path=$(command -v node)"\necho "[remote] conda=$(command -v conda 2>/dev/null || true)"\necho "[remote] harness_port=${remotePort}"\nexec npx --yes @deepseek-ai/dsh --profile web --patch "$PLUGIN/cordis.patch.yml" --port ${remotePortQuoted}\n`;
+  const script = `set -euo pipefail\nROOT="\${DEEPSEEK_HARNESS_REMOTE_HOME:-$HOME/.deepseek-harness-remote}"\nPLUGIN="$ROOT/plugin"\n${condaPrefix}\n${runtimePrefix}\nexport DSH_HOME="\${DSH_HOME:-$HOME/.dsh}"\nSESSION_PACKAGE_DIR="$DSH_HOME/profiles/node_modules/deepseek-harness-remote-session-env"\nUSAGE_PACKAGE_DIR="$DSH_HOME/profiles/node_modules/deepseek-harness-remote-usage-cost"\nmkdir -p "$SESSION_PACKAGE_DIR" "$USAGE_PACKAGE_DIR" "$ROOT/session-env" "$ROOT/logs"\ncp "$PLUGIN/index.js" "$PLUGIN/package.json" "$SESSION_PACKAGE_DIR/"\ncp "$PLUGIN/usage-cost.js" "$USAGE_PACKAGE_DIR/index.js"\ncp "$PLUGIN/usage-package.json" "$USAGE_PACKAGE_DIR/package.json"\nexport DEEPSEEK_HARNESS_PARENT_BASH_ENV="\${BASH_ENV:-}"\nexport BASH_ENV="$PLUGIN/bash-env.sh"\nexport DEEPSEEK_HARNESS_SESSION_ENV_DIR="$ROOT/session-env"\nexport DEEPSEEK_HARNESS_BASE_PATH="$PATH"\nexport DEEPSEEK_HARNESS_REMOTE_INSTANCE=${instanceQuoted}\ncd ${workspaceQuoted}\necho "[remote] workspace=$(pwd -P)"\necho "[remote] node=$(node -v)"\necho "[remote] node_path=$(command -v node)"\necho "[remote] conda=$(command -v conda 2>/dev/null || true)"\necho "[remote] harness_port=${remotePort}"\nexec npx --yes @deepseek-ai/dsh --profile web --patch "$PLUGIN/cordis.patch.yml" --port ${remotePortQuoted}\n`;
 
   // A user's ~/.ssh/config may contain RemoteForward entries that are unrelated
   // to Harness. If one of those ports is already occupied, ExitOnForwardFailure
@@ -344,7 +351,7 @@ export function createHarnessTunnel({ host, workspace, localPort, remotePort, ru
 
   child.stdout.setEncoding('utf8');
   child.stderr.setEncoding('utf8');
-  child.stdout.on('data', (chunk) => onLog?.(String(chunk)));
+  child.stdout.on('data', (chunk) => (onStdout ?? onLog)?.(String(chunk)));
   child.stderr.on('data', (chunk) => normalizeSshStderr(chunk, onLog));
   child.stdin.end(script);
   return child;
