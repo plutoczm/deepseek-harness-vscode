@@ -10,8 +10,18 @@ interface SessionEnvironmentIntegration {
   readonly patchArgs: string[];
 }
 
+interface OwnedHarnessState {
+  readonly pid: number;
+  readonly port: number;
+  readonly workspace: string;
+  readonly logPath: string;
+  readonly startedAt: number;
+  readonly processStartTicks?: string;
+}
+
 class HarnessLauncher implements vscode.Disposable {
   private child?: ChildProcess;
+  private owned?: OwnedHarnessState;
   private starting?: Promise<void>;
   private stopping = false;
   private state: 'stopped' | 'starting' | 'running' | 'error' = 'stopped';
@@ -37,6 +47,36 @@ class HarnessLauncher implements vscode.Disposable {
 
   private async startInternal(): Promise<void> {
     const port = this.port();
+    const workspace = this.workspacePath();
+
+    const persisted = await this.readOwnedState();
+    if (persisted && persisted.port === port && (await this.pidMatchesState(persisted))) {
+      this.owned = persisted;
+      this.state = 'starting';
+      this.updateStatus('Reattaching to extension-owned Harness process');
+      this.output.appendLine(
+        `[launcher] Reattaching to Harness PID ${persisted.pid} from a previous Extension Host.`,
+      );
+      this.output.appendLine(`[launcher] Harness workspace: ${persisted.workspace}`);
+      this.output.appendLine(`[launcher] Persistent log: ${persisted.logPath}`);
+
+      try {
+        await this.waitForOwnedPort(port, this.startupTimeoutMs(), persisted);
+        this.state = 'running';
+        this.updateStatus(
+          persisted.workspace === workspace
+            ? 'Reattached after Extension Host reload'
+            : `Running for ${persisted.workspace}`,
+        );
+        this.output.appendLine(`[launcher] Harness Web UI is ready on 127.0.0.1:${port}.`);
+        return;
+      } catch (error) {
+        this.output.appendLine(`[launcher] Persisted Harness could not be reattached: ${errorText(error)}`);
+        await this.stopOwnedProcess();
+      }
+    } else if (persisted) {
+      await this.clearOwnedState();
+    }
 
     if (await this.isPortOpen(port)) {
       this.state = 'running';
@@ -48,7 +88,6 @@ class HarnessLauncher implements vscode.Disposable {
       return;
     }
 
-    const workspace = this.workspacePath();
     const npx = this.npxCommand();
     const integration = await this.prepareSessionEnvironmentIntegration();
     const args = [
@@ -61,46 +100,78 @@ class HarnessLauncher implements vscode.Disposable {
       String(port),
     ];
 
+    await fs.mkdir(this.context.globalStorageUri.fsPath, { recursive: true, mode: 0o700 });
+    const logPath = path.join(this.context.globalStorageUri.fsPath, 'harness.log');
+    await fs.writeFile(logPath, '', { encoding: 'utf8', mode: 0o600 });
+    const logHandle = await fs.open(logPath, 'a', 0o600);
+
     this.state = 'starting';
     this.updateStatus();
     this.output.appendLine('');
     this.output.appendLine(`[launcher] Workspace: ${workspace}`);
     this.output.appendLine(`[launcher] Starting: ${npx} ${args.join(' ')}`);
+    this.output.appendLine(`[launcher] Persistent log: ${logPath}`);
 
     let spawnError: Error | undefined;
-    const child = spawn(npx, args, {
-      cwd: workspace,
-      env: integration.env,
-      detached: process.platform !== 'win32',
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    this.child = child;
+    let child: ChildProcess;
+    try {
+      child = spawn(npx, args, {
+        cwd: workspace,
+        env: integration.env,
+        detached: process.platform !== 'win32',
+        windowsHide: true,
+        stdio: ['ignore', logHandle.fd, logHandle.fd],
+      });
+    } finally {
+      await logHandle.close();
+    }
 
-    child.stdout?.setEncoding('utf8');
-    child.stderr?.setEncoding('utf8');
-    child.stdout?.on('data', (chunk: string) => this.output.append(chunk));
-    child.stderr?.on('data', (chunk: string) => this.output.append(chunk));
+    this.child = child;
+    child.unref();
+
     child.once('error', (error) => {
       spawnError = error;
       this.output.appendLine(`[launcher] Failed to start process: ${error.message}`);
     });
+
+    if (!child.pid) {
+      this.state = 'error';
+      this.updateStatus();
+      throw new Error('DeepSeek Harness process started without a PID.');
+    }
+
+    const owned: OwnedHarnessState = {
+      pid: child.pid,
+      port,
+      workspace,
+      logPath,
+      startedAt: Date.now(),
+      processStartTicks: await this.readProcessStartTicks(child.pid),
+    };
+    this.owned = owned;
+    await this.writeOwnedState(owned);
+
     child.once('exit', (code, signal) => {
       const intentional = this.stopping;
       if (this.child === child) {
         this.child = undefined;
       }
+      if (this.owned?.pid === owned.pid) {
+        this.owned = undefined;
+        void this.clearOwnedStateIfPid(owned.pid);
+      }
       if (!intentional) {
         this.output.appendLine(
           `[launcher] Harness process exited${code !== null ? ` with code ${code}` : ''}${signal ? ` (${signal})` : ''}.`,
         );
+        this.output.appendLine(`[launcher] Process log: ${logPath}`);
         this.state = 'stopped';
         this.updateStatus();
       }
     });
 
     try {
-      await this.waitForPort(port, this.startupTimeoutMs(), () => spawnError, child);
+      await this.waitForOwnedPort(port, this.startupTimeoutMs(), owned, () => spawnError);
       this.state = 'running';
       this.updateStatus();
       this.output.appendLine(`[launcher] Harness Web UI is ready on 127.0.0.1:${port}.`);
@@ -110,6 +181,7 @@ class HarnessLauncher implements vscode.Disposable {
     } catch (error) {
       this.state = 'error';
       this.updateStatus();
+      await this.appendPersistentLog();
       await this.stopOwnedProcess();
 
       const message = error instanceof Error ? error.message : String(error);
@@ -143,13 +215,20 @@ class HarnessLauncher implements vscode.Disposable {
   }
 
   async stop(): Promise<void> {
-    if (!this.child) {
+    if (!this.owned) {
+      const persisted = await this.readOwnedState();
+      if (persisted && (await this.pidMatchesState(persisted))) {
+        this.owned = persisted;
+      }
+    }
+
+    if (!this.owned) {
       const portInUse = await this.isPortOpen(this.port());
       this.state = portInUse ? 'running' : 'stopped';
       this.updateStatus(portInUse ? 'Service is running but was not started by this extension' : undefined);
       if (portInUse) {
         vscode.window.showInformationMessage(
-          'DeepSeek Harness is listening on the configured port, but this extension did not start that process, so it was left running.',
+          'DeepSeek Harness is listening on the configured port, but this extension does not own that process, so it was left running.',
         );
       }
       return;
@@ -166,7 +245,8 @@ class HarnessLauncher implements vscode.Disposable {
     await this.start();
   }
 
-  showLogs(): void {
+  async showLogs(): Promise<void> {
+    await this.appendPersistentLog();
     this.output.show(true);
   }
 
@@ -255,6 +335,87 @@ class HarnessLauncher implements vscode.Disposable {
     return path.resolve(configured);
   }
 
+  private stateFile(): string {
+    return path.join(this.context.globalStorageUri.fsPath, 'harness-process.json');
+  }
+
+  private async readOwnedState(): Promise<OwnedHarnessState | undefined> {
+    try {
+      const raw = await fs.readFile(this.stateFile(), 'utf8');
+      const parsed = JSON.parse(raw) as Partial<OwnedHarnessState>;
+      if (
+        typeof parsed.pid !== 'number' ||
+        typeof parsed.port !== 'number' ||
+        typeof parsed.workspace !== 'string' ||
+        typeof parsed.logPath !== 'string' ||
+        typeof parsed.startedAt !== 'number'
+      ) {
+        return undefined;
+      }
+      return parsed as OwnedHarnessState;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT') {
+        this.output.appendLine(`[launcher] Could not read persisted process state: ${errorText(error)}`);
+      }
+      return undefined;
+    }
+  }
+
+  private async writeOwnedState(state: OwnedHarnessState): Promise<void> {
+    await fs.mkdir(this.context.globalStorageUri.fsPath, { recursive: true, mode: 0o700 });
+    await fs.writeFile(this.stateFile(), `${JSON.stringify(state, null, 2)}\n`, {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
+  }
+
+  private async clearOwnedState(): Promise<void> {
+    try {
+      await fs.unlink(this.stateFile());
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        this.output.appendLine(`[launcher] Could not remove persisted process state: ${errorText(error)}`);
+      }
+    }
+  }
+
+  private async clearOwnedStateIfPid(pid: number): Promise<void> {
+    const persisted = await this.readOwnedState();
+    if (!persisted || persisted.pid === pid) {
+      await this.clearOwnedState();
+    }
+  }
+
+  private async readProcessStartTicks(pid: number): Promise<string | undefined> {
+    if (process.platform !== 'linux') {
+      return undefined;
+    }
+    try {
+      const stat = await fs.readFile(`/proc/${pid}/stat`, 'utf8');
+      const closingParen = stat.lastIndexOf(')');
+      if (closingParen < 0) return undefined;
+      const fields = stat.slice(closingParen + 2).trim().split(/\s+/);
+      return fields[19];
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async pidMatchesState(state: OwnedHarnessState): Promise<boolean> {
+    try {
+      process.kill(state.pid, 0);
+    } catch {
+      return false;
+    }
+
+    if (state.processStartTicks && process.platform === 'linux') {
+      const current = await this.readProcessStartTicks(state.pid);
+      return current === state.processStartTicks;
+    }
+    return true;
+  }
+
   private updateStatus(detail?: string): void {
     const remote = vscode.env.remoteName ? `Remote: ${vscode.env.remoteName}` : 'Local';
     const port = this.port();
@@ -284,20 +445,20 @@ class HarnessLauncher implements vscode.Disposable {
       .join('\n');
   }
 
-  private async waitForPort(
+  private async waitForOwnedPort(
     port: number,
     timeoutMs: number,
-    getSpawnError: () => Error | undefined,
-    child: ChildProcess,
+    owned: OwnedHarnessState,
+    getSpawnError?: () => Error | undefined,
   ): Promise<void> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      const spawnError = getSpawnError();
+      const spawnError = getSpawnError?.();
       if (spawnError) {
         throw spawnError;
       }
-      if (child.exitCode !== null) {
-        throw new Error(`DeepSeek Harness exited before opening port ${port} (code ${child.exitCode}).`);
+      if (!(await this.pidMatchesState(owned))) {
+        throw new Error(`DeepSeek Harness PID ${owned.pid} exited before opening port ${port}.`);
       }
       if (await this.isPortOpen(port)) {
         return;
@@ -324,10 +485,29 @@ class HarnessLauncher implements vscode.Disposable {
     });
   }
 
+  private async appendPersistentLog(): Promise<void> {
+    const logPath = this.owned?.logPath ?? path.join(this.context.globalStorageUri.fsPath, 'harness.log');
+    try {
+      const text = await fs.readFile(logPath, 'utf8');
+      const tail = text.length > 60000 ? text.slice(-60000) : text;
+      this.output.appendLine('');
+      this.output.appendLine(`[launcher] ===== Harness process log: ${logPath} =====`);
+      this.output.append(tail);
+      if (tail && !tail.endsWith('\n')) this.output.appendLine('');
+      this.output.appendLine('[launcher] ===== End Harness process log =====');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        this.output.appendLine(`[launcher] Could not read Harness process log: ${errorText(error)}`);
+      }
+    }
+  }
+
   private async stopOwnedProcess(): Promise<void> {
-    const child = this.child;
+    const owned = this.owned ?? (await this.readOwnedState());
     this.child = undefined;
-    if (!child || child.exitCode !== null || !child.pid) {
+    this.owned = undefined;
+    if (!owned || !(await this.pidMatchesState(owned))) {
+      await this.clearOwnedState();
       return;
     }
 
@@ -335,55 +515,54 @@ class HarnessLauncher implements vscode.Disposable {
     try {
       if (process.platform === 'win32') {
         await new Promise<void>((resolve) => {
-          const killer = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
+          const killer = spawn('taskkill', ['/PID', String(owned.pid), '/T', '/F'], {
             windowsHide: true,
             stdio: 'ignore',
           });
           killer.once('exit', () => resolve());
-          killer.once('error', () => {
-            child.kill();
-            resolve();
-          });
+          killer.once('error', () => resolve());
         });
       } else {
         try {
-          process.kill(-child.pid, 'SIGTERM');
+          process.kill(-owned.pid, 'SIGTERM');
         } catch {
-          child.kill('SIGTERM');
+          try {
+            process.kill(owned.pid, 'SIGTERM');
+          } catch {
+            // Process already exited.
+          }
         }
 
         const deadline = Date.now() + 2500;
-        while (Date.now() < deadline && (await this.isPortOpen(this.port()))) {
+        while (Date.now() < deadline && (await this.pidMatchesState(owned))) {
           await delay(150);
         }
 
-        if (await this.isPortOpen(this.port())) {
+        if (await this.pidMatchesState(owned)) {
           try {
-            process.kill(-child.pid, 'SIGKILL');
+            process.kill(-owned.pid, 'SIGKILL');
           } catch {
-            child.kill('SIGKILL');
+            try {
+              process.kill(owned.pid, 'SIGKILL');
+            } catch {
+              // Process already exited.
+            }
           }
         }
       }
     } finally {
+      await this.clearOwnedState();
       this.stopping = false;
     }
   }
 
   dispose(): void {
-    const child = this.child;
+    // Deliberately do not terminate Harness here. Remote SSH may recreate the
+    // Extension Host during reconnects, reloads, upgrades, or transient host
+    // failures. The detached Harness process is persisted and reattached by the
+    // next Extension Host. Explicit Stop/Restart remain the only kill paths.
+    this.child?.unref();
     this.child = undefined;
-    if (child?.pid && child.exitCode === null) {
-      try {
-        if (process.platform === 'win32') {
-          child.kill();
-        } else {
-          process.kill(-child.pid, 'SIGTERM');
-        }
-      } catch {
-        child.kill();
-      }
-    }
     this.statusBar.dispose();
     this.output.dispose();
   }
@@ -408,7 +587,7 @@ export function activate(context: vscode.ExtensionContext): void {
         } catch (error) {
           const choice = await vscode.window.showErrorMessage(errorText(error), 'Show Logs');
           if (choice === 'Show Logs') {
-            launcher.showLogs();
+            await launcher.showLogs();
           }
         }
       }),
@@ -432,5 +611,5 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): void {
-  // HarnessLauncher is disposed by the extension context.
+  // HarnessLauncher is disposed by the extension context without killing Harness.
 }
