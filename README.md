@@ -16,6 +16,7 @@ DeepSeek Harness Remote desktop app
     ├── lets you choose a remote workspace
     ├── checks remote Node/Python/Conda
     ├── installs a private Node 22 runtime when needed (no sudo)
+    ├── optionally bridges Bash/Git/web traffic through local 127.0.0.1:7890
     └── opens an SSH local port-forward
              │
              ▼
@@ -24,7 +25,8 @@ DeepSeek Harness Remote desktop app
              └── official @deepseek-ai/dsh --profile web
                     │
                     ├── remote files / Git / Bash / Python
-                    └── per-Harness-session Python environment picker
+                    ├── per-Harness-session Python environment picker
+                    └── DeepSeek model traffic stays on the remote network
 ```
 
 Harness itself runs **on the selected remote host**, so its Bash, Git and filesystem operations naturally target that server. The launcher does not reimplement the agent or its coding tools.
@@ -34,7 +36,7 @@ Harness itself runs **on the selected remote host**, so its Bash, Git and filesy
 The primary distribution target is a Windows x64 installer:
 
 ```text
-DeepSeek-Harness-Remote-0.2.0-Setup-x64.exe
+DeepSeek-Harness-Remote-0.3.0-Setup-x64.exe
 ```
 
 After installation, launch **DeepSeek Harness Remote** from the desktop shortcut or Start menu. The app starts its local control service internally and opens the launcher UI inside the desktop window. No `npm run remote`, PowerShell window, or local browser tab is required for normal use.
@@ -56,6 +58,57 @@ Inside the app:
 5. The official DeepSeek Harness Web UI opens in its own application window through the SSH tunnel.
 
 The server list is populated from concrete `Host` entries in `~/.ssh/config`. You can also type any alias that your system `ssh` command understands.
+
+## Local VPN / proxy bridge
+
+Version 0.3.0 can automatically detect a local HTTP/mixed proxy on:
+
+```text
+127.0.0.1:7890
+```
+
+This matches the common local proxy endpoint used by VPN/proxy clients such as Clash-style configurations. The host and port can also be overridden for development with:
+
+```text
+DSH_LOCAL_PROXY_HOST
+DSH_LOCAL_PROXY_PORT
+```
+
+When the local proxy is reachable, the desktop app opens a dedicated SSH reverse-forward and exposes that proxy on an ephemeral loopback port on the selected remote host.
+
+The important routing rule is deliberately selective:
+
+```text
+DeepSeek Harness model/API traffic
+    -> remote server network directly
+
+Harness Bash / Git / curl / wget / Python subprocess traffic
+    -> BASH_ENV
+    -> remote loopback proxy port
+    -> SSH reverse-forward
+    -> local 127.0.0.1:7890
+    -> local VPN / proxy egress
+```
+
+The desktop app does **not** set `HTTP_PROXY` or `HTTPS_PROXY` on the Harness process itself. Proxy variables are injected only into Bash/tool subprocesses through the bundled `BASH_ENV` bootstrap. `NO_PROXY` explicitly includes `api.deepseek.com` and `.deepseek.com` as an additional guard.
+
+This is intended to solve cases where the remote server can run DeepSeek normally but cannot reach GitHub or other external research sites. For example, `git push`, `curl`, `wget`, Python `requests`, and similar subprocesses can use the local VPN path without forcing DeepSeek model calls through the VPN.
+
+If `127.0.0.1:7890` is unavailable, the launcher falls back to the remote server's normal network and records that decision in the instance log.
+
+## Live DeepSeek API balance / spend overlay
+
+Desktop Harness windows include a small live DeepSeek API widget. The launcher samples the official DeepSeek `/user/balance` endpoint from the **remote login environment**, so the API-key request follows the remote server's normal network path rather than the local VPN bridge.
+
+The widget shows:
+
+- current DeepSeek account balance (CNY and/or USD as returned by the API),
+- approximate balance decrease since that Harness instance started,
+- a 10-second refresh cadence.
+
+The balance endpoint requires `DEEPSEEK_API_KEY` to be available in the remote login shell. The key is never rendered into the desktop page or written to launcher logs.
+
+The per-instance spend figure is deliberately labelled approximate: it is derived from the account-level balance decrease between the instance baseline and the latest sample. If the same API key is used concurrently by another Harness instance or another application, those charges also affect the balance delta.
 
 ## Remote file browser
 
@@ -127,7 +180,7 @@ The launcher uses only the current user's home directory:
 ~/.deepseek-harness-remote/
 ├── runtime/node/       # optional private Node 22
 ├── plugin/             # Harness session-env plugin
-└── session-env/        # per-session environment state
+└── session-env/        # per-session environment + per-instance network state
 ```
 
 It also places the plugin package in the user's normal Harness module-resolution location under `$DSH_HOME` (default `~/.dsh`).
@@ -139,6 +192,8 @@ It also places the plugin package in the user's normal Harness module-resolution
 - SSH authentication is delegated to the system OpenSSH client and `~/.ssh/config`.
 - The launcher does not store SSH private keys.
 - Harness Web traffic is exposed locally only through `ssh -L`.
+- The optional VPN/proxy bridge is exposed to the remote host only through an SSH reverse-forward bound to remote loopback.
+- DeepSeek model traffic is not globally assigned the local VPN proxy.
 - Remote commands run with the permissions of the SSH user you selected.
 - Unexpected non-local application window navigation is blocked; normal HTTPS links open externally.
 
@@ -147,6 +202,8 @@ It also places the plugin package in the user's normal Harness module-resolution
 The remote execution path currently targets Linux SSH hosts with Bash. SSH password prompts are intentionally not embedded in the application; configure key/agent authentication first. If the remote system Node is too old, downloading the private runtime requires access to `nodejs.org` from that server.
 
 The environment chooser is a native Harness question shown on first Bash use, plus `/env`. A permanent environment dropdown in the Harness header would require a deeper Web UI patch and is intentionally deferred to keep compatibility with upstream Harness.
+
+The local VPN bridge currently probes an HTTP/mixed proxy endpoint. A SOCKS-only endpoint that does not accept HTTP `CONNECT` is treated as unavailable rather than silently changing DeepSeek routing.
 
 ## Development
 
