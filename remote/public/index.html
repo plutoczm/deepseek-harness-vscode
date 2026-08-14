@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/files.css">
   <link rel="stylesheet" href="/workspace-picker.css">
   <link rel="stylesheet" href="/ui-polish.css">
+  <link rel="stylesheet" href="/network-options.css">
 </head>
 <body>
   <main class="shell">
@@ -72,6 +73,23 @@
             </div>
             <div id="browser" class="file-browser hidden"></div>
           </div>
+
+          <details class="network-options">
+            <summary>
+              <span>高级网络</span>
+              <span id="network-summary" class="network-summary">远程服务器直连 · 推荐</span>
+            </summary>
+            <div class="network-options-body">
+              <label class="proxy-toggle-row" for="use-local-proxy">
+                <input id="use-local-proxy" type="checkbox">
+                <span class="proxy-toggle-copy">
+                  <strong>网络故障时使用本机代理 127.0.0.1:7890</strong>
+                  <span>默认关闭。仅对新启动实例的 Bash / Git / curl / wget 等工具流量启用；DeepSeek 模型请求仍保持远程服务器直连。</span>
+                </span>
+              </label>
+              <p class="proxy-route-note">Harness 内置 <code>web_search</code> 不依赖这个开关；只有远程命令本身无法访问 GitHub 或外网时才建议开启。</p>
+            </div>
+          </details>
 
           <div class="env-callout">
             <div class="env-icon" aria-hidden="true">⌘</div>
@@ -179,6 +197,7 @@
       <span>远程文件页遵循 SSH 用户权限，不绕过服务器访问控制。</span>
     </footer>
   </main>
+  <script src="/network-options.js"></script>
   <script type="module" src="/app.js"></script>
   <script type="module" src="/workspace-picker.js"></script>
   <script type="module" src="/ui-polish.js"></script>
