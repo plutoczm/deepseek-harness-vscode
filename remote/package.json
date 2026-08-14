@@ -39,6 +39,19 @@
       "harness-plugin/**/*",
       "package.json"
     ],
+    "extraResources": [
+      {
+        "from": "node_modules/pdfjs-dist",
+        "to": "pdfjs-dist",
+        "filter": [
+          "build/**/*",
+          "cmaps/**/*",
+          "standard_fonts/**/*",
+          "wasm/**/*",
+          "LICENSE"
+        ]
+      }
+    ],
     "win": {
       "target": [
         {
