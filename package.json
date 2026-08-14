@@ -2,7 +2,7 @@
   "name": "deepseek-harness-vscode",
   "displayName": "DeepSeek Harness",
   "description": "DeepSeek Harness integration for VS Code with Remote SSH support.",
-  "version": "0.1.0-alpha.1",
+  "version": "0.2.0-alpha.1",
   "publisher": "plutoczm",
   "license": "MIT",
   "engines": {
@@ -13,7 +13,12 @@
   "activationEvents": [
     "onView:deepseekHarness.chatView",
     "onCommand:deepseekHarness.setApiKey",
-    "onCommand:deepseekHarness.newSession"
+    "onCommand:deepseekHarness.newSession",
+    "onCommand:deepseekHarness.addSelection",
+    "onCommand:deepseekHarness.addCurrentFile",
+    "onCommand:deepseekHarness.addProblems",
+    "onCommand:deepseekHarness.fixSelection",
+    "onCommand:deepseekHarness.explainSelection"
   ],
   "main": "./dist/extension.js",
   "extensionKind": ["workspace"],
@@ -21,8 +26,39 @@
     "commands": [
       {"command": "deepseekHarness.setApiKey", "title": "DeepSeek Harness: Set API Key"},
       {"command": "deepseekHarness.newSession", "title": "DeepSeek Harness: New Session"},
-      {"command": "deepseekHarness.installRuntime", "title": "DeepSeek Harness: Install/Upgrade Runtime"}
+      {"command": "deepseekHarness.installRuntime", "title": "DeepSeek Harness: Install/Upgrade Runtime"},
+      {"command": "deepseekHarness.addSelection", "title": "DeepSeek Harness: Add Selection to Context"},
+      {"command": "deepseekHarness.addCurrentFile", "title": "DeepSeek Harness: Add File to Context"},
+      {"command": "deepseekHarness.addProblems", "title": "DeepSeek Harness: Add Problems to Context"},
+      {"command": "deepseekHarness.fixSelection", "title": "DeepSeek Harness: Fix Selected Code"},
+      {"command": "deepseekHarness.explainSelection", "title": "DeepSeek Harness: Explain Selected Code"}
     ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "deepseekHarness.fixSelection",
+          "when": "editorHasSelection",
+          "group": "1_modification@90"
+        },
+        {
+          "command": "deepseekHarness.explainSelection",
+          "when": "editorHasSelection",
+          "group": "1_modification@91"
+        },
+        {
+          "command": "deepseekHarness.addSelection",
+          "when": "editorHasSelection",
+          "group": "1_modification@92"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "deepseekHarness.addCurrentFile",
+          "when": "resourceScheme == file",
+          "group": "4_search@90"
+        }
+      ]
+    },
     "viewsContainers": {
       "activitybar": [
         {
@@ -65,6 +101,13 @@
           "default": 49152,
           "minimum": 1,
           "description": "Per-request output-token cap passed to DeepSeek Harness."
+        },
+        "deepseekHarness.maxContextChars": {
+          "type": "number",
+          "default": 60000,
+          "minimum": 1000,
+          "maximum": 500000,
+          "description": "Maximum characters captured for each VS Code context item before truncation."
         }
       }
     }
