@@ -6,6 +6,7 @@ import {
   findLocalFreePort,
   findRemoteFreePort,
   resolveRemoteNode,
+  runSsh,
   waitForHttp,
 } from './ssh.mjs';
 import { validateHost, validateRemotePath } from './config.mjs';
@@ -14,6 +15,26 @@ import { accumulateUsage } from './usage-cost.mjs';
 
 const MAX_LOG_CHARS = 250_000;
 const USAGE_MARKER = '__DHR_USAGE__';
+const TERMINAL_STATUSES = new Set(['stopped', 'error']);
+const REMOTE_CLEANUP_DELAYS_MS = [0, 1500, 5000, 15000];
+
+export function normalizeProcessExitCode(code) {
+  if (code === null || code === undefined || !Number.isInteger(code)) return code;
+  return code > 0x7fffffff ? code - 0x100000000 : code;
+}
+
+export function sshExitMessage(code, signal) {
+  const normalized = normalizeProcessExitCode(code);
+  if (normalized === 255) return 'SSH connection lost (exit 255). Harness was stopped with the SSH tunnel.';
+  if (normalized === -1) return 'SSH process terminated unexpectedly (Windows exit -1). Harness was stopped with the SSH tunnel.';
+  if (signal) return `SSH/Harness terminated by ${signal}.`;
+  if (normalized === 0) return 'SSH/Harness session ended.';
+  return `SSH/Harness exited with code ${normalized}.`;
+}
+
+function shellQuote(value) {
+  return `'${String(value).replaceAll("'", "'\"'\"'")}'`;
+}
 
 export class HarnessManager extends EventEmitter {
   constructor(pluginDirectory) {
@@ -34,6 +55,9 @@ export class HarnessManager extends EventEmitter {
       nodeVersion: instance.nodeVersion,
       nodeSource: instance.nodeSource,
       createdAt: instance.createdAt,
+      endedAt: instance.endedAt,
+      exitCode: instance.exitCode,
+      exitSignal: instance.exitSignal,
       error: instance.error,
       usageAvailable: Boolean(instance.latestUsageSessionId),
       network: instance.network ? {
@@ -44,6 +68,21 @@ export class HarnessManager extends EventEmitter {
         remoteProxyPort: instance.network.remoteProxyPort,
       } : { enabled: false, mode: 'remote-direct' },
     };
+  }
+
+  emitInstanceStatus(instance) {
+    this.emit('instance-status', {
+      instanceId: instance.id,
+      instance: this.publicInstance(instance),
+    });
+  }
+
+  onInstanceStatus(id, listener) {
+    const handler = (event) => {
+      if (!id || event.instanceId === id) listener(event.instance);
+    };
+    this.on('instance-status', handler);
+    return () => this.off('instance-status', handler);
   }
 
   list() {
@@ -71,6 +110,7 @@ export class HarnessManager extends EventEmitter {
       : sessions[0];
     return {
       available: sessions.length > 0,
+      active: !TERMINAL_STATUSES.has(instance.status),
       mode: 'event-driven',
       latestSessionId: instance.latestUsageSessionId || null,
       session: latest || null,
@@ -127,6 +167,47 @@ export class HarnessManager extends EventEmitter {
     if (line && !this.consumeUsageLine(instance, line)) this.appendLog(instance, line);
   }
 
+  remoteCleanupScript(instance) {
+    const marker = shellQuote(`DEEPSEEK_HARNESS_REMOTE_INSTANCE=${instance.id}`);
+    return `set +e\nMARKER=${marker}\nPIDS=''\nfor ENVFILE in /proc/[0-9]*/environ; do\n  PID=\"\${ENVFILE#/proc/}\"\n  PID=\"\${PID%/environ}\"\n  [ \"$PID\" = \"$$\" ] && continue\n  [ -r \"$ENVFILE\" ] || continue\n  if tr '\\0' '\\n' < \"$ENVFILE\" 2>/dev/null | grep -Fqx -- \"$MARKER\"; then\n    PIDS=\"$PIDS $PID\"\n  fi\ndone\nif [ -n \"$PIDS\" ]; then\n  kill -TERM $PIDS 2>/dev/null || true\n  sleep 0.35\n  for PID in $PIDS; do kill -0 \"$PID\" 2>/dev/null && kill -KILL \"$PID\" 2>/dev/null || true; done\nfi\nexit 0\n`;
+  }
+
+  async cleanupRemoteHarness(instance, { quiet = false } = {}) {
+    if (!instance?.id || !instance?.host) return false;
+    try {
+      await runSsh(instance.host, this.remoteCleanupScript(instance), { timeoutMs: 9000, maxBytes: 64 * 1024 });
+      if (!quiet) this.appendLog(instance, '[lifecycle] Remote Harness processes for this instance were cleaned up.\n');
+      return true;
+    } catch (error) {
+      if (!quiet) this.appendLog(instance, `[lifecycle] Remote cleanup could not connect yet: ${error instanceof Error ? error.message : String(error)}\n`);
+      return false;
+    }
+  }
+
+  scheduleRemoteCleanup(instance) {
+    if (instance.remoteCleanupScheduled) return;
+    instance.remoteCleanupScheduled = true;
+    REMOTE_CLEANUP_DELAYS_MS.forEach((delay, index) => {
+      const timer = setTimeout(async () => {
+        if (instance.remoteCleanupDone) return;
+        const cleaned = await this.cleanupRemoteHarness(instance, { quiet: index > 0 });
+        if (cleaned) instance.remoteCleanupDone = true;
+      }, delay);
+      timer.unref?.();
+    });
+  }
+
+  markEnded(instance, status, { code, signal, error } = {}) {
+    instance.status = status;
+    instance.endedAt ||= new Date().toISOString();
+    instance.exitCode = normalizeProcessExitCode(code);
+    instance.exitSignal = signal || undefined;
+    if (error) instance.error = error;
+    this.emitInstanceStatus(instance);
+    const snapshot = this.usage(instance.id);
+    this.emit('usage', { instanceId: instance.id, snapshot, event: null });
+  }
+
   async launch({ host: hostInput, workspace: workspaceInput, installRuntime = true, enableLocalProxy = false }) {
     const host = validateHost(hostInput);
     const workspace = validateRemotePath(workspaceInput);
@@ -143,6 +224,7 @@ export class HarnessManager extends EventEmitter {
       network: { enabled: false, mode: 'remote-direct' },
     };
     this.instances.set(instance.id, instance);
+    this.emitInstanceStatus(instance);
 
     try {
       this.appendLog(instance, `[launcher] Connecting to ${host}\n`);
@@ -186,6 +268,7 @@ export class HarnessManager extends EventEmitter {
       instance.localPort = localPort;
       instance.remotePort = remotePort;
       instance.status = 'starting';
+      this.emitInstanceStatus(instance);
       this.appendLog(instance, `[launcher] SSH tunnel 127.0.0.1:${localPort} -> ${host}:127.0.0.1:${remotePort}\n`);
 
       const child = createHarnessTunnel({
@@ -201,31 +284,49 @@ export class HarnessManager extends EventEmitter {
       });
       instance.child = child;
       child.once('error', (error) => {
-        instance.error = error.message;
-        instance.status = 'error';
+        if (TERMINAL_STATUSES.has(instance.status)) return;
         this.appendLog(instance, `[launcher] SSH process error: ${error.message}\n`);
+        this.markEnded(instance, 'error', { error: `SSH process error: ${error.message}` });
+        this.scheduleRemoteCleanup(instance);
       });
       child.once('exit', (code, signal) => {
         this.flushHarnessStdout(instance);
+        const normalized = normalizeProcessExitCode(code);
+        instance.exitCode = normalized;
+        instance.exitSignal = signal || undefined;
+        this.appendLog(instance, `[launcher] SSH/Harness exited${normalized !== null && normalized !== undefined ? ` code=${normalized}` : ''}${signal ? ` signal=${signal}` : ''}.\n`);
         if (instance.status === 'stopping' || instance.status === 'stopped') return;
-        instance.status = code === 0 ? 'stopped' : 'error';
-        if (code !== 0) instance.error = `SSH/Harness exited with code ${code}${signal ? ` (${signal})` : ''}.`;
-        this.appendLog(instance, `[launcher] SSH/Harness exited${code !== null ? ` code=${code}` : ''}${signal ? ` signal=${signal}` : ''}.\n`);
+        const status = normalized === 0 ? 'stopped' : 'error';
+        this.markEnded(instance, status, {
+          code,
+          signal,
+          error: normalized === 0 ? undefined : sshExitMessage(code, signal),
+        });
+        this.scheduleRemoteCleanup(instance);
+        const proxyChild = instance.network?.child;
+        if (proxyChild && proxyChild.exitCode === null) proxyChild.kill('SIGTERM');
+        if (instance.network?.enabled) clearRemoteProxyEnvironment(instance.host, instance.id).catch(() => undefined);
       });
 
       await waitForHttp(localPort, { child, timeoutMs: 180000 });
+      if (child.exitCode !== null || TERMINAL_STATUSES.has(instance.status)) {
+        throw new Error(instance.error || sshExitMessage(child.exitCode, child.signalCode));
+      }
       instance.status = 'running';
+      this.emitInstanceStatus(instance);
       this.appendLog(instance, `[launcher] Harness ready: http://127.0.0.1:${localPort}\n`);
       this.appendLog(instance, '[usage] Event-driven DeepSeek token/cost tracking is active; no /user/balance polling is used.\n');
       this.appendLog(instance, '[launcher] Each Harness session will ask for its Python/Conda environment on first Bash use. Use /env to change it later.\n');
       return this.publicInstance(instance);
     } catch (error) {
-      instance.status = 'error';
-      instance.error = error instanceof Error ? error.message : String(error);
+      const message = error instanceof Error ? error.message : String(error);
+      if (!TERMINAL_STATUSES.has(instance.status)) this.markEnded(instance, 'error', { error: message });
+      else if (!instance.error) instance.error = message;
       this.appendLog(instance, `[launcher] ERROR: ${instance.error}\n`);
       if (instance.child?.exitCode === null) instance.child.kill('SIGTERM');
       if (instance.network?.child?.exitCode === null) instance.network.child.kill('SIGTERM');
       if (instance.network?.enabled) await clearRemoteProxyEnvironment(instance.host, instance.id).catch(() => undefined);
+      this.scheduleRemoteCleanup(instance);
       throw Object.assign(new Error(instance.error), { instanceId: instance.id });
     }
   }
@@ -233,7 +334,9 @@ export class HarnessManager extends EventEmitter {
   async stop(id) {
     const instance = this.instances.get(id);
     if (!instance) return false;
+    if (instance.status === 'stopped') return true;
     instance.status = 'stopping';
+    this.emitInstanceStatus(instance);
     const child = instance.child;
     if (child && child.exitCode === null) {
       child.kill('SIGTERM');
@@ -244,11 +347,13 @@ export class HarnessManager extends EventEmitter {
       if (child.exitCode === null) child.kill('SIGKILL');
     }
     this.flushHarnessStdout(instance);
+    await this.cleanupRemoteHarness(instance).catch(() => undefined);
+    instance.remoteCleanupDone = true;
     const proxyChild = instance.network?.child;
     if (proxyChild && proxyChild.exitCode === null) proxyChild.kill('SIGTERM');
     if (instance.network?.enabled) await clearRemoteProxyEnvironment(instance.host, instance.id).catch(() => undefined);
-    instance.status = 'stopped';
-    this.appendLog(instance, '[launcher] Stopped.\n');
+    this.markEnded(instance, 'stopped', { code: child?.exitCode, signal: child?.signalCode });
+    this.appendLog(instance, '[launcher] Stopped. SSH tunnel and remote Harness are now both closed.\n');
     return true;
   }
 
