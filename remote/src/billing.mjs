@@ -16,7 +16,7 @@ function parsePayload(stdout) {
 
 export async function readDeepSeekBalance(host) {
   const script = String.raw`set +e
-if [ -z "${DEEPSEEK_API_KEY:-}" ]; then
+if [ -z "\${DEEPSEEK_API_KEY:-}" ]; then
   printf '${MARKER}%s\n' '{"available":false,"error":"DEEPSEEK_API_KEY is not available in the remote login shell."}'
   exit 0
 fi
@@ -25,12 +25,12 @@ const marker = '${MARKER}';
 (async () => {
   try {
     const response = await fetch('https://api.deepseek.com/user/balance', {
-      headers: { Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}` },
+      headers: { Authorization: 'Bearer ' + process.env.DEEPSEEK_API_KEY },
       signal: AbortSignal.timeout(8000),
     });
     const text = await response.text();
     if (!response.ok) {
-      console.log(marker + JSON.stringify({ available: false, error: `DeepSeek balance API returned HTTP ${response.status}.` }));
+      console.log(marker + JSON.stringify({ available: false, error: 'DeepSeek balance API returned HTTP ' + response.status + '.' }));
       return;
     }
     const data = JSON.parse(text);
