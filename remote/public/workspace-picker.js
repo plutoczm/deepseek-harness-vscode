@@ -1,6 +1,7 @@
 const browser = document.querySelector('#browser');
 const browseButton = document.querySelector('#browse');
 const workspaceInput = document.querySelector('#workspace');
+const hostInput = document.querySelector('#host');
 
 if (browser && browseButton && workspaceInput) {
   const picker = browser.closest('.field-group');
@@ -30,10 +31,16 @@ if (browser && browseButton && workspaceInput) {
   }
 
   function addPopoverControls() {
-    const header = browser.querySelector('.browser-path');
-    if (!header || header.querySelector('.browser-popover-actions')) return;
+    let header = browser.querySelector('.browser-path');
+    if (!header) {
+      header = document.createElement('div');
+      header.className = 'browser-path';
+      header.textContent = workspaceInput.value || '远程目录';
+      browser.prepend(header);
+    }
+    if (header.querySelector('.browser-popover-actions')) return;
 
-    const currentPath = header.textContent;
+    const currentPath = header.textContent || workspaceInput.value || '远程目录';
     header.textContent = '';
     header.classList.add('browser-popover-header');
 
@@ -115,6 +122,8 @@ if (browser && browseButton && workspaceInput) {
       closePicker({ focus: true });
     }
   });
+
+  hostInput?.addEventListener('change', () => closePicker());
 
   document.querySelectorAll('.view-tab').forEach((tab) => {
     tab.addEventListener('click', () => {
