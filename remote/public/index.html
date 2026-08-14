@@ -3,24 +3,119 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
   <title>DeepSeek Harness Remote</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-<main>
-  <header><div><small>OFFICIAL HARNESS · SSH</small><h1>DeepSeek Harness Remote</h1><p>选择服务器和远程项目，在服务器上运行官方 Harness；浏览器通过 SSH 隧道访问。</p></div><span class="badge">Local 127.0.0.1</span></header>
-  <section class="grid">
-    <article class="card">
-      <h2>启动</h2>
-      <label>SSH 服务器</label><div class="row"><input id="host" list="hosts" placeholder="例如 GDWYY70"><datalist id="hosts"></datalist><button id="check">检查</button></div><p id="ssh-config" class="hint"></p>
-      <div id="check-result" class="status hidden"></div>
-      <label>远程工作区</label><div class="row"><input id="workspace" placeholder="/mnt/ext-disk/.../project"><button id="browse">浏览</button></div><div id="browser" class="browser hidden"></div>
-      <div class="note"><b>每个 Harness 会话独立环境</b><span>首次执行 Bash 时使用 Harness 原生选项选择 Conda/venv；之后可用 <code>/env</code> 更换。</span></div>
-      <button id="launch" class="primary">连接并打开 Harness</button><p id="launch-status" class="hint"></p>
-    </article>
-    <article class="card"><div class="head"><h2>实例</h2><button id="refresh">刷新</button></div><div id="instances" class="instances empty">暂无实例</div></article>
-  </section>
-  <section class="card logs"><div class="head"><h2>日志</h2><span id="log-title" class="hint">选择实例</span></div><pre id="log-view">日志会显示在这里。</pre></section>
-</main>
-<script type="module" src="/app.js"></script>
-</body></html>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">D</div>
+        <div>
+          <div class="eyebrow">DEEPSEEK HARNESS · REMOTE</div>
+          <h1>DeepSeek Harness Remote</h1>
+          <p>选择服务器和远程项目，在服务器上运行官方 Harness，通过 SSH 安全访问。</p>
+        </div>
+      </div>
+      <div class="local-chip"><span class="live-dot"></span>Local · 127.0.0.1</div>
+    </header>
+
+    <section class="workspace-grid">
+      <article class="surface launch-panel">
+        <div class="section-title">
+          <div>
+            <span class="section-kicker">NEW REMOTE SESSION</span>
+            <h2>启动 Harness</h2>
+          </div>
+          <span class="section-index">01</span>
+        </div>
+
+        <div class="field-group">
+          <div class="field-head">
+            <label for="host">SSH 服务器</label>
+            <span id="ssh-config" class="field-note"></span>
+          </div>
+          <div class="control-row">
+            <div class="input-shell server-input">
+              <span class="input-icon" aria-hidden="true">⌁</span>
+              <input id="host" list="hosts" autocomplete="off" placeholder="例如 GDWYY70">
+              <datalist id="hosts"></datalist>
+            </div>
+            <button id="check" class="button secondary">检查连接</button>
+          </div>
+          <div id="check-result" class="runtime-panel hidden"></div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="field-group">
+          <div class="field-head">
+            <label for="workspace">远程工作区</label>
+            <span class="field-note">Harness 将以这里作为项目根目录</span>
+          </div>
+          <div class="control-row">
+            <div class="input-shell">
+              <span class="input-icon folder-glyph" aria-hidden="true"></span>
+              <input id="workspace" autocomplete="off" placeholder="/mnt/ext-disk/.../project">
+            </div>
+            <button id="browse" class="button secondary">浏览</button>
+          </div>
+          <div id="browser" class="file-browser hidden"></div>
+        </div>
+
+        <div class="env-callout">
+          <div class="env-icon" aria-hidden="true">⌘</div>
+          <div class="env-copy">
+            <strong>每个 Harness 会话独立选择 Python 环境</strong>
+            <span>首次执行 Bash 时会弹出 Conda / venv 单选；随时使用 <code>/env</code> 切换。</span>
+          </div>
+          <span class="env-badge">PER SESSION</span>
+        </div>
+
+        <div class="launch-footer">
+          <p id="launch-status" class="launch-status">准备好后启动远程 Harness。</p>
+          <button id="launch" class="button primary">
+            <span>连接并打开 Harness</span><span aria-hidden="true">↗</span>
+          </button>
+        </div>
+      </article>
+
+      <aside class="surface instances-panel">
+        <div class="section-title compact">
+          <div>
+            <span class="section-kicker">ACTIVE CONNECTIONS</span>
+            <h2>实例</h2>
+          </div>
+          <button id="refresh" class="icon-button" title="刷新实例" aria-label="刷新实例">↻</button>
+        </div>
+        <div id="instances" class="instances empty-state">
+          <div class="empty-icon">◇</div>
+          <strong>暂无实例</strong>
+          <span>启动 Harness 后会显示在这里。</span>
+        </div>
+      </aside>
+    </section>
+
+    <section class="surface log-panel">
+      <div class="log-header">
+        <div>
+          <span class="section-kicker">REMOTE OUTPUT</span>
+          <h2>日志</h2>
+        </div>
+        <div class="log-tools">
+          <span id="log-title" class="log-context">选择一个实例查看日志</span>
+          <button id="copy-logs" class="icon-button text-button" disabled>复制日志</button>
+        </div>
+      </div>
+      <pre id="log-view"><span class="log-placeholder">日志会显示在这里。</span></pre>
+    </section>
+
+    <footer class="footer-note">
+      <span>Official DeepSeek Harness runs on the selected SSH host.</span>
+      <span>SSH keys remain managed by your system OpenSSH client.</span>
+    </footer>
+  </main>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
