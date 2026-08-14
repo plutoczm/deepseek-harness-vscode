@@ -6,6 +6,31 @@ This extension does **not** reimplement the DeepSeek agent, chat UI, sessions, f
 
 > DeepSeek Harness is currently in developer preview and may introduce breaking changes.
 
+## Install the VSIX
+
+Every successful CI run on `main` builds an installable artifact named:
+
+```text
+deepseek-harness-vscode-vsix
+```
+
+The downloaded ZIP contains:
+
+```text
+deepseek-harness-vscode.vsix
+```
+
+To install it in VS Code:
+
+1. Open the repository's **Actions** tab.
+2. Open the latest successful **CI** run.
+3. Download the `deepseek-harness-vscode-vsix` artifact.
+4. Unzip it.
+5. In VS Code, open **Extensions** → `...` → **Install from VSIX...**.
+6. Select `deepseek-harness-vscode.vsix`.
+
+For Remote SSH, connect to the Linux server first. In the Extensions view, make sure **DeepSeek Harness** is installed/enabled for the SSH host. Because this extension is a workspace extension, the launcher runs in the remote Extension Host.
+
 ## What it does
 
 When you run **DeepSeek Harness: Open in VS Code**, the extension:
@@ -149,6 +174,13 @@ git clone https://github.com/plutoczm/deepseek-harness-vscode.git
 cd deepseek-harness-vscode
 npm install
 npm run compile
+npm run package
+```
+
+`npm run package` creates:
+
+```text
+deepseek-harness-vscode.vsix
 ```
 
 Press `F5` to launch an Extension Development Host.
