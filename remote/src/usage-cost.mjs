@@ -1,7 +1,7 @@
 const PRICE_CNY_PER_MILLION = Object.freeze({
   'deepseek-v4-flash': Object.freeze({ cacheHit: 0.02, cacheMiss: 1, output: 2 }),
   'deepseek-v4-pro': Object.freeze({ cacheHit: 0.025, cacheMiss: 3, output: 6 }),
-  // Historical aliases mapped to V4 Flash for compatibility with old sessions.
+  // Compatibility aliases documented by DeepSeek as V4 Flash routes.
   'deepseek-chat': Object.freeze({ cacheHit: 0.02, cacheMiss: 1, output: 2 }),
   'deepseek-reasoner': Object.freeze({ cacheHit: 0.02, cacheMiss: 1, output: 2 }),
 });
@@ -83,6 +83,7 @@ export function accumulateUsage(previous, payload) {
   const model = String(payload?.model || previous?.model || '');
   const provider = String(payload?.provider || previous?.provider || '');
   const sessionId = String(payload?.sessionId || previous?.sessionId || '');
+  const purpose = payload?.purpose ? String(payload.purpose) : null;
   const sampleCost = usageCostCny(model, sample);
   const totals = addTotals(previous?.totals ?? emptyTotals(), sample);
   const knownCost = Number(previous?.costCny || 0) + (sampleCost ?? 0);
@@ -111,6 +112,7 @@ export function accumulateUsage(previous, payload) {
       pricingKnown: sampleCost !== null,
       model,
       provider,
+      purpose,
       at: updatedAt,
     },
     updatedAt,
