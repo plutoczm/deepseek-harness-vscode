@@ -1,0 +1,26 @@
+name: Standalone Remote CI
+
+on:
+  push:
+    paths:
+      - 'remote/**'
+      - '.github/workflows/remote-ci.yml'
+  pull_request:
+    paths:
+      - 'remote/**'
+      - '.github/workflows/remote-ci.yml'
+
+jobs:
+  remote:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check standalone launcher and Harness plugin
+        working-directory: remote
+        run: npm run check
+      - name: Unit tests
+        working-directory: remote
+        run: npm test

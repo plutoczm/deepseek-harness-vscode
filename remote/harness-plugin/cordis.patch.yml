@@ -1,0 +1,3 @@
+- insert:
+    - id: remote-session-env
+      name: deepseek-harness-remote-session-env
