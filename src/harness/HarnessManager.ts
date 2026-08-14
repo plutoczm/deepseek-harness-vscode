@@ -4,27 +4,56 @@ import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 export type HarnessBridgeMessage =
-  | { type: 'ready' }
+  | { type: 'ready'; model?: string; cwd?: string; sdkVersion?: string }
   | { type: 'notification'; requestId: string; notification: unknown }
-  | { type: 'result'; requestId: string; sessionId: string; finalResponse: string | null; finishReason: string | null }
+  | {
+      type: 'result';
+      requestId: string;
+      sessionId: string;
+      finalResponse: string | null;
+      finishReason: string | null;
+    }
+  | { type: 'log'; stream: 'stderr'; message: string }
   | { type: 'error'; requestId?: string; message: string; traceback?: string };
+
+export interface HarnessRuntimeInfo {
+  sessionId: string;
+  model: string;
+  remoteName: string;
+  workspaceName: string;
+}
+
+const SESSION_STATE_KEY = 'deepseekHarness.currentSessionId';
 
 export class HarnessManager implements vscode.Disposable {
   private process?: ChildProcessWithoutNullStreams;
   private stdoutBuffer = '';
-  private sessionId = randomUUID();
+  private sessionId: string;
   private readonly messageEmitter = new vscode.EventEmitter<HarnessBridgeMessage>();
   readonly onMessage = this.messageEmitter.event;
 
-  constructor(private readonly context: vscode.ExtensionContext) {}
+  constructor(private readonly context: vscode.ExtensionContext) {
+    this.sessionId = context.workspaceState.get<string>(SESSION_STATE_KEY) ?? randomUUID();
+    void context.workspaceState.update(SESSION_STATE_KEY, this.sessionId);
+  }
 
   newSession(): string {
     this.sessionId = randomUUID();
+    void this.context.workspaceState.update(SESSION_STATE_KEY, this.sessionId);
     return this.sessionId;
   }
 
   getSessionId(): string {
     return this.sessionId;
+  }
+
+  getRuntimeInfo(): HarnessRuntimeInfo {
+    return {
+      sessionId: this.sessionId,
+      model: this.config<string>('model', 'deepseek-v4-pro'),
+      remoteName: vscode.env.remoteName ?? 'local',
+      workspaceName: vscode.workspace.workspaceFolders?.[0]?.name ?? 'no-workspace',
+    };
   }
 
   async sendPrompt(prompt: string): Promise<string> {
@@ -114,7 +143,10 @@ export class HarnessManager implements vscode.Disposable {
     this.process.stderr.setEncoding('utf8');
     this.process.stdout.on('data', (chunk: string) => this.consumeStdout(chunk));
     this.process.stderr.on('data', (chunk: string) => {
-      this.messageEmitter.fire({ type: 'error', message: chunk.trim() });
+      const message = chunk.trim();
+      if (message) {
+        this.messageEmitter.fire({ type: 'log', stream: 'stderr', message });
+      }
     });
     this.process.on('error', (error) => {
       this.messageEmitter.fire({ type: 'error', message: error.message });
