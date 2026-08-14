@@ -4,6 +4,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadSshHosts, MIN_REMOTE_NODE } from './config.mjs';
+import { listRemoteFiles, readRemoteFile } from './files.mjs';
 import { HarnessManager } from './manager.mjs';
 import { checkRemote, installPrivateNode22, listRemoteDirectories } from './ssh.mjs';
 
@@ -98,6 +99,16 @@ const server = http.createServer(async (request, response) => {
 
     if (url.pathname === '/api/directories' && request.method === 'GET') {
       json(response, 200, await listRemoteDirectories(url.searchParams.get('host'), url.searchParams.get('path')));
+      return;
+    }
+
+    if (url.pathname === '/api/files' && request.method === 'GET') {
+      json(response, 200, await listRemoteFiles(url.searchParams.get('host'), url.searchParams.get('path') || '/'));
+      return;
+    }
+
+    if (url.pathname === '/api/file' && request.method === 'GET') {
+      json(response, 200, await readRemoteFile(url.searchParams.get('host'), url.searchParams.get('path')));
       return;
     }
 
