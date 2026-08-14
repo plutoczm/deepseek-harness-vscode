@@ -38,6 +38,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('deepseekHarness.interrupt', async () => {
+      await chatView.interrupt();
+    }),
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand('deepseekHarness.installRuntime', async () => {
       await harness.installOrUpgradeRuntime();
     }),
@@ -76,6 +82,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       chatView.prefillPrompt(
         'Explain the selected code precisely: what it does, the important control/data flow, assumptions, edge cases, and any correctness or maintainability risks.',
       );
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration(async (event) => {
+      const runtimeKeys = [
+        'deepseekHarness.pythonPath',
+        'deepseekHarness.model',
+        'deepseekHarness.baseUrl',
+        'deepseekHarness.maxTokens',
+      ];
+      if (runtimeKeys.some((key) => event.affectsConfiguration(key))) {
+        await harness.restart();
+        chatView.refreshRuntimeInfo();
+      }
     }),
   );
 
