@@ -1,8 +1,8 @@
 {
   "name": "deepseek-harness-remote",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
-  "description": "Desktop launcher for the official DeepSeek Harness on SSH hosts with remote file/PDF viewing, per-session Python environments, optional local proxy fallback, and event-driven time-aware API cost display.",
+  "description": "Desktop launcher for the official DeepSeek Harness on SSH hosts with remote file/PDF viewing, per-session Python environment whitelists and auto-routing, SSH-bound lifecycle, optional local proxy fallback, and event-driven time-aware API cost display.",
   "main": "desktop/main.cjs",
   "type": "module",
   "engines": {
