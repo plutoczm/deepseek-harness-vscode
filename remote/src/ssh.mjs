@@ -40,6 +40,7 @@ function runProcess(command, args, { input, timeoutMs = 30000, maxBytes = 4 * 10
       const next = current + chunk.toString('utf8');
       return next.length > maxBytes ? next.slice(-maxBytes) : next;
     };
+
     child.stdout.on('data', (chunk) => { stdout = append(stdout, chunk); });
     child.stderr.on('data', (chunk) => { stderr = append(stderr, chunk); });
     child.once('error', (error) => {
@@ -59,6 +60,7 @@ function runProcess(command, args, { input, timeoutMs = 30000, maxBytes = 4 * 10
         reject(new Error(detail));
       }
     });
+
     if (input !== undefined) child.stdin.end(input);
     else child.stdin.end();
   });
@@ -66,8 +68,6 @@ function runProcess(command, args, { input, timeoutMs = 30000, maxBytes = 4 * 10
 
 export async function runSsh(hostInput, script, options = {}) {
   const host = validateHost(hostInput);
-  // Environment discovery uses an interactive Bash so ~/.bashrc-managed tools such as
-  // nvm/fnm/Conda are visible. Normal launcher commands stay non-interactive.
   const bashArgs = options.interactiveShell ? ['bash', '-i', '-s'] : ['bash', '-s'];
   try {
     return await runProcess('ssh', [...SSH_OPTIONS, host, ...bashArgs], {
@@ -111,7 +111,7 @@ find_conda() {
     "$HOME/miniconda3/bin/conda" "$HOME/anaconda3/bin/conda" \
     "$HOME/miniforge3/bin/conda" "$HOME/mambaforge/bin/conda" \
     "$HOME/miniconda/bin/conda" "$HOME/anaconda/bin/conda" \
-    "/opt/conda/bin/conda"; do
+    "/opt/miniconda3/bin/conda" "/opt/conda/bin/conda"; do
     if [ -x "$c" ]; then printf '%s\n' "$c"; return; fi
   done
 }
@@ -276,11 +276,13 @@ export async function resolveRemoteNode(host, { installIfMissing = true } = {}) 
 }
 
 export async function findRemoteFreePort(host, runtimeBin = '') {
-  const pathPrefix = runtimeBin ? `export PATH="${runtimeBin}:$PATH"\n` : '';
+  const pathPrefix = runtimeBin ? `export PATH=${shellQuote(runtimeBin)}:"$PATH"\n` : '';
   const script = `${pathPrefix}node - <<'NODE'\nconst net = require('node:net');\nconst server = net.createServer();\nserver.listen(0, '127.0.0.1', () => { console.log(server.address().port); server.close(); });\nNODE\n`;
   const { stdout } = await runSsh(host, script, { timeoutMs: 15000 });
   const port = Number(stdout.trim().split(/\s+/u).at(-1));
-  if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error(`Could not allocate remote port: ${stdout.trim()}`);
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+    throw new Error(`Could not allocate remote port: ${stdout.trim()}`);
+  }
   return port;
 }
 
@@ -297,23 +299,41 @@ export function findLocalFreePort() {
   });
 }
 
+function normalizeSshStderr(chunk, onLog) {
+  const text = String(chunk);
+  if (!/remote port forwarding failed for listen port/iu.test(text)) {
+    onLog?.(text);
+    return;
+  }
+  const kept = text
+    .split(/\r?\n/u)
+    .filter((line) => line && !/remote port forwarding failed for listen port/iu.test(line));
+  onLog?.('[ssh] Ignored a failed RemoteForward inherited from ~/.ssh/config; the Harness local tunnel will continue.\n');
+  if (kept.length) onLog?.(`${kept.join('\n')}\n`);
+}
+
 export function createHarnessTunnel({ host, workspace, localPort, remotePort, runtimeBin, condaPath, onLog, instanceId }) {
   validateHost(host);
   validateRemotePath(workspace);
-  const runtimePrefix = runtimeBin ? `export PATH="${runtimeBin}:$PATH"` : ':';
+
+  const runtimePrefix = runtimeBin ? `export PATH=${shellQuote(runtimeBin)}:"$PATH"` : ':';
   const condaBin = condaPath?.startsWith('/') ? path.posix.dirname(condaPath) : '';
   const condaPrefix = condaBin
     ? `export PATH=${shellQuote(condaBin)}:"$PATH"`
-    : `for CONDA_BIN in "$HOME/miniconda3/bin" "$HOME/anaconda3/bin" "$HOME/miniforge3/bin" "$HOME/mambaforge/bin" "$HOME/miniconda/bin" "$HOME/anaconda/bin" "/opt/conda/bin"; do\n  if [ -x "$CONDA_BIN/conda" ]; then export PATH="$CONDA_BIN:$PATH"; break; fi\ndone`;
+    : `for CONDA_BIN in "$HOME/miniconda3/bin" "$HOME/anaconda3/bin" "$HOME/miniforge3/bin" "$HOME/mambaforge/bin" "$HOME/miniconda/bin" "$HOME/anaconda/bin" "/opt/miniconda3/bin" "/opt/conda/bin"; do\n  if [ -x "$CONDA_BIN/conda" ]; then export PATH="$CONDA_BIN:$PATH"; break; fi\ndone`;
+
   const workspaceQuoted = shellQuote(workspace);
   const remotePortQuoted = shellQuote(String(remotePort));
   const instanceQuoted = shellQuote(instanceId);
-  const script = `set -euo pipefail\nROOT="\${DEEPSEEK_HARNESS_REMOTE_HOME:-$HOME/.deepseek-harness-remote}"\nPLUGIN="$ROOT/plugin"\n${runtimePrefix}\n${condaPrefix}\nexport DSH_HOME="\${DSH_HOME:-$HOME/.dsh}"\nPACKAGE_DIR="$DSH_HOME/profiles/node_modules/deepseek-harness-remote-session-env"\nmkdir -p "$PACKAGE_DIR" "$ROOT/session-env" "$ROOT/logs"\ncp "$PLUGIN/index.js" "$PLUGIN/package.json" "$PACKAGE_DIR/"\nexport DEEPSEEK_HARNESS_PARENT_BASH_ENV="\${BASH_ENV:-}"\nexport BASH_ENV="$PLUGIN/bash-env.sh"\nexport DEEPSEEK_HARNESS_SESSION_ENV_DIR="$ROOT/session-env"\nexport DEEPSEEK_HARNESS_BASE_PATH="$PATH"\nexport DEEPSEEK_HARNESS_REMOTE_INSTANCE=${instanceQuoted}\ncd ${workspaceQuoted}\necho "[remote] workspace=$(pwd -P)"\necho "[remote] node=$(node -v)"\necho "[remote] node_path=$(command -v node)"\necho "[remote] conda=$(command -v conda 2>/dev/null || true)"\necho "[remote] harness_port=${remotePort}"\nexec npx --yes @deepseek-ai/dsh --profile web --patch "$PLUGIN/cordis.patch.yml" --port ${remotePortQuoted}\n`;
+  const script = `set -euo pipefail\nROOT="\${DEEPSEEK_HARNESS_REMOTE_HOME:-$HOME/.deepseek-harness-remote}"\nPLUGIN="$ROOT/plugin"\n${condaPrefix}\n${runtimePrefix}\nexport DSH_HOME="\${DSH_HOME:-$HOME/.dsh}"\nPACKAGE_DIR="$DSH_HOME/profiles/node_modules/deepseek-harness-remote-session-env"\nmkdir -p "$PACKAGE_DIR" "$ROOT/session-env" "$ROOT/logs"\ncp "$PLUGIN/index.js" "$PLUGIN/package.json" "$PACKAGE_DIR/"\nexport DEEPSEEK_HARNESS_PARENT_BASH_ENV="\${BASH_ENV:-}"\nexport BASH_ENV="$PLUGIN/bash-env.sh"\nexport DEEPSEEK_HARNESS_SESSION_ENV_DIR="$ROOT/session-env"\nexport DEEPSEEK_HARNESS_BASE_PATH="$PATH"\nexport DEEPSEEK_HARNESS_REMOTE_INSTANCE=${instanceQuoted}\ncd ${workspaceQuoted}\necho "[remote] workspace=$(pwd -P)"\necho "[remote] node=$(node -v)"\necho "[remote] node_path=$(command -v node)"\necho "[remote] conda=$(command -v conda 2>/dev/null || true)"\necho "[remote] harness_port=${remotePort}"\nexec npx --yes @deepseek-ai/dsh --profile web --patch "$PLUGIN/cordis.patch.yml" --port ${remotePortQuoted}\n`;
 
+  // A user's ~/.ssh/config may contain RemoteForward entries that are unrelated
+  // to Harness. If one of those ports is already occupied, ExitOnForwardFailure
+  // must not tear down our otherwise healthy local (-L) Harness tunnel.
   const child = spawn('ssh', [
     ...SSH_OPTIONS,
     '-T',
-    '-o', 'ExitOnForwardFailure=yes',
+    '-o', 'ExitOnForwardFailure=no',
     '-L', `${localPort}:127.0.0.1:${remotePort}`,
     host,
     'bash', '-s',
@@ -321,10 +341,11 @@ export function createHarnessTunnel({ host, workspace, localPort, remotePort, ru
     windowsHide: true,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
+
   child.stdout.setEncoding('utf8');
   child.stderr.setEncoding('utf8');
   child.stdout.on('data', (chunk) => onLog?.(String(chunk)));
-  child.stderr.on('data', (chunk) => onLog?.(String(chunk)));
+  child.stderr.on('data', (chunk) => normalizeSshStderr(chunk, onLog));
   child.stdin.end(script);
   return child;
 }
@@ -343,8 +364,11 @@ export function waitForHttp(port, { timeoutMs = 180000, child } = {}) {
       });
       request.on('timeout', () => request.destroy());
       request.on('error', () => {
-        if (Date.now() >= deadline) reject(new Error(`Timed out waiting for Harness on local port ${port}.`));
-        else setTimeout(tryOnce, 400);
+        if (Date.now() >= deadline) {
+          reject(new Error(`Timed out waiting for Harness on local port ${port}.`));
+        } else {
+          setTimeout(tryOnce, 400);
+        }
       });
     };
     tryOnce();
