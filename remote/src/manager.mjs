@@ -72,9 +72,13 @@ export class HarnessManager {
       if (!runtime.path && runtime.source === 'missing') {
         throw new Error(`Remote Node.js is ${runtime.version || 'unavailable'}. DeepSeek Harness requires Node.js >= 22.19.0. Install the private runtime and retry.`);
       }
+      if (runtime.path?.startsWith('$HOME/') && runtime.info?.home) {
+        runtime.path = `${runtime.info.home}/${runtime.path.slice('$HOME/'.length)}`;
+      }
       instance.nodeVersion = runtime.version;
       instance.nodeSource = runtime.source;
       this.appendLog(instance, `[launcher] Node ${runtime.version} (${runtime.source})\n`);
+      if (runtime.path) this.appendLog(instance, `[launcher] Node bin ${runtime.path}\n`);
       if (runtime.condaPath) this.appendLog(instance, `[launcher] Conda ${runtime.condaPath}\n`);
 
       await deployPlugin(host, this.pluginDirectory);
