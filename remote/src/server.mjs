@@ -4,12 +4,19 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadSshHosts, MIN_REMOTE_NODE } from './config.mjs';
-import { listRemoteFiles, readRemoteFile } from './files.mjs';
+import {
+  listRemoteFiles,
+  openRemoteFileStream,
+  parseHttpByteRange,
+  readRemoteFile,
+  remoteFileMetadata,
+} from './files.mjs';
 import { HarnessManager } from './manager.mjs';
 import { checkRemote, installPrivateNode22, listRemoteDirectories } from './ssh.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const publicDirectory = path.resolve(here, '../public');
+const pdfjsDirectory = path.resolve(here, '../node_modules/pdfjs-dist');
 const pluginDirectory = path.resolve(here, '../harness-plugin');
 const manager = new HarnessManager(pluginDirectory);
 const bindHost = '127.0.0.1';
@@ -18,11 +25,15 @@ const port = Number(process.env.DSH_REMOTE_PORT || 4173);
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.ico': 'image/x-icon',
+  '.wasm': 'application/wasm',
+  '.bcmap': 'application/octet-stream',
+  '.pfb': 'application/octet-stream',
 };
 
 function json(response, status, body) {
@@ -44,6 +55,27 @@ async function readJson(request) {
   return raw ? JSON.parse(raw) : {};
 }
 
+async function serveFileFromRoot(response, root, pathname, prefix, cacheControl = 'no-cache') {
+  const relative = pathname.slice(prefix.length);
+  const candidate = path.resolve(root, relative || '.');
+  if (candidate !== root && !candidate.startsWith(`${root}${path.sep}`)) {
+    response.writeHead(403).end('Forbidden');
+    return;
+  }
+  try {
+    const data = await fs.readFile(candidate);
+    response.writeHead(200, {
+      'content-type': MIME[path.extname(candidate).toLowerCase()] ?? 'application/octet-stream',
+      'cache-control': cacheControl,
+      'x-content-type-options': 'nosniff',
+    });
+    response.end(data);
+  } catch (error) {
+    if (error?.code === 'ENOENT') response.writeHead(404).end('Not found');
+    else throw error;
+  }
+}
+
 async function serveStatic(response, pathname) {
   const requested = pathname === '/' ? '/index.html' : pathname;
   const candidate = path.resolve(publicDirectory, `.${requested}`);
@@ -54,14 +86,92 @@ async function serveStatic(response, pathname) {
   try {
     const data = await fs.readFile(candidate);
     response.writeHead(200, {
-      'content-type': MIME[path.extname(candidate)] ?? 'application/octet-stream',
+      'content-type': MIME[path.extname(candidate).toLowerCase()] ?? 'application/octet-stream',
       'cache-control': 'no-cache',
+      'x-content-type-options': 'nosniff',
     });
     response.end(data);
   } catch (error) {
     if (error?.code === 'ENOENT') response.writeHead(404).end('Not found');
     else throw error;
   }
+}
+
+async function servePdfJsVendor(response, pathname) {
+  await serveFileFromRoot(response, pdfjsDirectory, pathname, '/vendor/pdfjs/', 'public, max-age=31536000, immutable');
+}
+
+function pdfContentDisposition(name, download) {
+  const encoded = encodeURIComponent(name || 'document.pdf');
+  return `${download ? 'attachment' : 'inline'}; filename*=UTF-8''${encoded}`;
+}
+
+async function serveRemotePdf(request, response, url) {
+  const host = url.searchParams.get('host');
+  const remotePath = url.searchParams.get('path');
+  const metadata = await remoteFileMetadata(host, remotePath);
+  if (metadata.extension !== '.pdf') {
+    json(response, 415, { error: 'PDF streaming endpoint only accepts .pdf files.' });
+    return;
+  }
+
+  const rangeHeader = request.headers.range;
+  const range = parseHttpByteRange(rangeHeader, metadata.size);
+  if (!range) {
+    response.writeHead(416, {
+      'content-range': `bytes */${metadata.size}`,
+      'accept-ranges': 'bytes',
+      'cache-control': 'no-store',
+    });
+    response.end();
+    return;
+  }
+
+  const modified = metadata.mtime ? new Date(metadata.mtime) : null;
+  const headers = {
+    'content-type': 'application/pdf',
+    'content-length': String(range.length),
+    'accept-ranges': 'bytes',
+    'cache-control': 'no-store',
+    'content-disposition': pdfContentDisposition(metadata.name, url.searchParams.get('download') === '1'),
+    'x-content-type-options': 'nosniff',
+    etag: `W/"${metadata.size}-${modified?.getTime() || 0}"`,
+  };
+  if (modified && !Number.isNaN(modified.getTime())) headers['last-modified'] = modified.toUTCString();
+  if (range.partial) headers['content-range'] = `bytes ${range.start}-${range.end}/${metadata.size}`;
+
+  const status = range.partial ? 206 : 200;
+  if (request.method === 'HEAD') {
+    response.writeHead(status, headers);
+    response.end();
+    return;
+  }
+
+  response.writeHead(status, headers);
+  if (range.length === 0) {
+    response.end();
+    return;
+  }
+
+  const child = openRemoteFileStream(host, remotePath, { start: range.start, length: range.length });
+  let stderr = '';
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk.toString('utf8');
+    if (stderr.length > 8192) stderr = stderr.slice(-8192);
+  });
+  child.once('error', (error) => {
+    if (!response.destroyed) response.destroy(error);
+  });
+  child.once('exit', (code) => {
+    if (code && !response.destroyed && !response.writableEnded) {
+      response.destroy(new Error(stderr.trim() || `SSH PDF stream exited with code ${code}.`));
+    }
+  });
+  request.once('aborted', () => child.kill('SIGTERM'));
+  response.once('close', () => {
+    if (!child.killed && !response.writableEnded) child.kill('SIGTERM');
+  });
+  child.stdout.pipe(response);
 }
 
 function instanceIdFrom(pathname, suffix = '') {
@@ -112,6 +222,11 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    if (url.pathname === '/api/pdf' && (request.method === 'GET' || request.method === 'HEAD')) {
+      await serveRemotePdf(request, response, url);
+      return;
+    }
+
     if (url.pathname === '/api/launch' && request.method === 'POST') {
       const body = await readJson(request);
       try {
@@ -158,13 +273,19 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && url.pathname.startsWith('/vendor/pdfjs/')) {
+      await servePdfJsVendor(response, url.pathname);
+      return;
+    }
+
     if (request.method === 'GET') {
       await serveStatic(response, url.pathname);
       return;
     }
     json(response, 404, { error: 'Not found.' });
   } catch (error) {
-    json(response, 500, { error: error instanceof Error ? error.message : String(error) });
+    if (!response.headersSent) json(response, 500, { error: error instanceof Error ? error.message : String(error) });
+    else if (!response.destroyed) response.destroy(error instanceof Error ? error : new Error(String(error)));
   }
 });
 
