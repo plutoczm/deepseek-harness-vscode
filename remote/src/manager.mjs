@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import {
   createHarnessTunnel,
   deployPlugin,
@@ -8,14 +9,15 @@ import {
   waitForHttp,
 } from './ssh.mjs';
 import { validateHost, validateRemotePath } from './config.mjs';
-import { balanceDelta, readDeepSeekBalance } from './billing.mjs';
 import { clearRemoteProxyEnvironment, startLocalProxyBridge } from './network.mjs';
+import { accumulateUsage } from './usage-cost.mjs';
 
 const MAX_LOG_CHARS = 250_000;
-const BALANCE_CACHE_MS = 8000;
+const USAGE_MARKER = '__DHR_USAGE__';
 
-export class HarnessManager {
+export class HarnessManager extends EventEmitter {
   constructor(pluginDirectory) {
+    super();
     this.pluginDirectory = pluginDirectory;
     this.instances = new Map();
   }
@@ -33,6 +35,7 @@ export class HarnessManager {
       nodeSource: instance.nodeSource,
       createdAt: instance.createdAt,
       error: instance.error,
+      usageAvailable: Boolean(instance.latestUsageSessionId),
       network: instance.network ? {
         enabled: Boolean(instance.network.enabled),
         mode: instance.network.mode || 'remote-direct',
@@ -58,36 +61,70 @@ export class HarnessManager {
     return this.instances.get(id)?.logs ?? '';
   }
 
+  usage(id) {
+    const instance = this.instances.get(id);
+    if (!instance) return undefined;
+    const sessions = [...(instance.usageSessions?.values() ?? [])]
+      .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+    const latest = instance.latestUsageSessionId
+      ? instance.usageSessions?.get(instance.latestUsageSessionId)
+      : sessions[0];
+    return {
+      available: sessions.length > 0,
+      mode: 'event-driven',
+      latestSessionId: instance.latestUsageSessionId || null,
+      session: latest || null,
+      sessions,
+      updatedAt: latest?.updatedAt || null,
+    };
+  }
+
+  onUsage(id, listener) {
+    const handler = (event) => {
+      if (event.instanceId === id) listener(event.snapshot);
+    };
+    this.on('usage', handler);
+    return () => this.off('usage', handler);
+  }
+
   appendLog(instance, chunk) {
     instance.logs += chunk;
     if (instance.logs.length > MAX_LOG_CHARS) instance.logs = instance.logs.slice(-MAX_LOG_CHARS);
   }
 
-  async balance(id, { force = false } = {}) {
-    const instance = this.instances.get(id);
-    if (!instance) return undefined;
-    const now = Date.now();
-    if (!force && instance.balanceLatest && now - (instance.balanceLatestAt || 0) < BALANCE_CACHE_MS) {
-      return instance.balanceLatest;
-    }
-    let current;
+  consumeUsageLine(instance, line) {
+    if (!line.startsWith(USAGE_MARKER)) return false;
+    const encoded = line.slice(USAGE_MARKER.length).trim();
+    if (!encoded) return true;
     try {
-      current = await readDeepSeekBalance(instance.host);
+      const payload = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
+      const sessionId = String(payload?.sessionId || '');
+      if (!sessionId) return true;
+      const previous = instance.usageSessions.get(sessionId);
+      const next = accumulateUsage(previous, payload);
+      instance.usageSessions.set(sessionId, next);
+      instance.latestUsageSessionId = sessionId;
+      const snapshot = this.usage(instance.id);
+      this.emit('usage', { instanceId: instance.id, snapshot, event: next.last });
     } catch (error) {
-      current = { available: false, error: error instanceof Error ? error.message : String(error) };
+      this.appendLog(instance, `[usage] Could not decode Harness usage event: ${error instanceof Error ? error.message : String(error)}\n`);
     }
-    if (!instance.balanceBaseline?.available && current.available) {
-      instance.balanceBaseline = current;
+    return true;
+  }
+
+  handleHarnessStdout(instance, chunk) {
+    const text = `${instance.stdoutBuffer || ''}${String(chunk)}`;
+    const lines = text.split(/\r?\n/u);
+    instance.stdoutBuffer = lines.pop() ?? '';
+    for (const line of lines) {
+      if (!this.consumeUsageLine(instance, line)) this.appendLog(instance, `${line}\n`);
     }
-    const result = {
-      ...current,
-      delta: balanceDelta(instance.balanceBaseline, current),
-      baselineAt: instance.balanceBaseline?.sampledAt || instance.createdAt,
-      note: 'Instance spend is derived from the account balance decrease since this instance started. Concurrent use of the same API key can affect this delta.',
-    };
-    instance.balanceLatest = result;
-    instance.balanceLatestAt = now;
-    return result;
+  }
+
+  flushHarnessStdout(instance) {
+    const line = instance.stdoutBuffer || '';
+    instance.stdoutBuffer = '';
+    if (line && !this.consumeUsageLine(instance, line)) this.appendLog(instance, line);
   }
 
   async launch({ host: hostInput, workspace: workspaceInput, installRuntime = true, enableLocalProxy = false }) {
@@ -99,6 +136,9 @@ export class HarnessManager {
       workspace,
       status: 'preparing',
       logs: '',
+      stdoutBuffer: '',
+      usageSessions: new Map(),
+      latestUsageSessionId: undefined,
       createdAt: new Date().toISOString(),
       network: { enabled: false, mode: 'remote-direct' },
     };
@@ -120,18 +160,7 @@ export class HarnessManager {
       if (runtime.condaPath) this.appendLog(instance, `[launcher] Conda ${runtime.condaPath}\n`);
 
       await deployPlugin(host, this.pluginDirectory);
-      this.appendLog(instance, '[launcher] Session environment plugin deployed.\n');
-
-      try {
-        instance.balanceBaseline = await readDeepSeekBalance(host);
-        if (instance.balanceBaseline.available) {
-          this.appendLog(instance, '[billing] DeepSeek account balance baseline captured for this instance.\n');
-        } else {
-          this.appendLog(instance, `[billing] Balance unavailable: ${instance.balanceBaseline.error || 'unknown reason'}\n`);
-        }
-      } catch (error) {
-        this.appendLog(instance, `[billing] Balance probe failed: ${error instanceof Error ? error.message : String(error)}\n`);
-      }
+      this.appendLog(instance, '[launcher] Session environment and usage observer plugins deployed.\n');
 
       if (enableLocalProxy) {
         try {
@@ -167,6 +196,7 @@ export class HarnessManager {
         runtimeBin: runtime.path,
         condaPath: runtime.condaPath,
         instanceId: instance.id,
+        onStdout: (chunk) => this.handleHarnessStdout(instance, chunk),
         onLog: (chunk) => this.appendLog(instance, chunk),
       });
       instance.child = child;
@@ -176,6 +206,7 @@ export class HarnessManager {
         this.appendLog(instance, `[launcher] SSH process error: ${error.message}\n`);
       });
       child.once('exit', (code, signal) => {
+        this.flushHarnessStdout(instance);
         if (instance.status === 'stopping' || instance.status === 'stopped') return;
         instance.status = code === 0 ? 'stopped' : 'error';
         if (code !== 0) instance.error = `SSH/Harness exited with code ${code}${signal ? ` (${signal})` : ''}.`;
@@ -185,6 +216,7 @@ export class HarnessManager {
       await waitForHttp(localPort, { child, timeoutMs: 180000 });
       instance.status = 'running';
       this.appendLog(instance, `[launcher] Harness ready: http://127.0.0.1:${localPort}\n`);
+      this.appendLog(instance, '[usage] Event-driven DeepSeek token/cost tracking is active; no /user/balance polling is used.\n');
       this.appendLog(instance, '[launcher] Each Harness session will ask for its Python/Conda environment on first Bash use. Use /env to change it later.\n');
       return this.publicInstance(instance);
     } catch (error) {
@@ -211,6 +243,7 @@ export class HarnessManager {
       });
       if (child.exitCode === null) child.kill('SIGKILL');
     }
+    this.flushHarnessStdout(instance);
     const proxyChild = instance.network?.child;
     if (proxyChild && proxyChild.exitCode === null) proxyChild.kill('SIGTERM');
     if (instance.network?.enabled) await clearRemoteProxyEnvironment(instance.host, instance.id).catch(() => undefined);
