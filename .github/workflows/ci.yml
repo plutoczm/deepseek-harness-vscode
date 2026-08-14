@@ -27,6 +27,9 @@ jobs:
       - name: Package VSIX
         run: npm run package
 
+      - name: Verify VSIX entrypoint
+        run: unzip -l deepseek-harness-vscode.vsix | grep -F 'extension/dist/extension.js'
+
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v4
         with:
