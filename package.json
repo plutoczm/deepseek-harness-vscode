@@ -5,6 +5,11 @@
   "version": "0.3.0-alpha.1",
   "publisher": "plutoczm",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/plutoczm/deepseek-harness-vscode.git"
+  },
+  "homepage": "https://github.com/plutoczm/deepseek-harness-vscode#readme",
   "engines": {
     "vscode": "^1.100.0"
   },
@@ -58,7 +63,7 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -w -p ./",
-    "package": "npm run compile && vsce package",
+    "package": "npm run compile && vsce package --out deepseek-harness-vscode.vsix",
     "check": "npm run compile"
   },
   "devDependencies": {
