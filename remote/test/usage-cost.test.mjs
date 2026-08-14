@@ -7,7 +7,7 @@ import {
   usageCostCny,
 } from '../src/usage-cost.mjs';
 
-test('prices DeepSeek V4 Flash token buckets in CNY', () => {
+test('prices DeepSeek V4 Flash token buckets in CNY before announced changeover', () => {
   assert.equal(usageCostCny('deepseek-v4-flash', {
     uncachedInputTokens: 1_000_000,
     cacheReadTokens: 1_000_000,
@@ -15,12 +15,22 @@ test('prices DeepSeek V4 Flash token buckets in CNY', () => {
   }, { at: '2026-08-14T12:00:00+08:00' }), 3.02);
 });
 
-test('prices DeepSeek V4 Pro token buckets in CNY', () => {
+test('prices DeepSeek V4 Pro token buckets in CNY before announced changeover', () => {
   assert.equal(usageCostCny('deepseek-v4-pro', {
     uncachedInputTokens: 1_000_000,
     cacheReadTokens: 1_000_000,
     outputTokens: 1_000_000,
   }, { at: '2026-08-14T12:00:00+08:00' }), 9.025);
+});
+
+test('does not silently apply stale flat pricing after the announced changeover', () => {
+  assert.equal(priceForModel('deepseek-v4-pro', {
+    at: '2026-08-17T00:00:00+08:00',
+  }), undefined);
+  assert.equal(usageCostCny('deepseek-v4-pro', {
+    uncachedInputTokens: 1_000,
+    outputTokens: 100,
+  }, { at: '2026-08-17T00:00:00+08:00' }), null);
 });
 
 test('cache hit percentage matches Harness billed-input semantics', () => {
