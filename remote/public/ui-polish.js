@@ -47,6 +47,16 @@ function initUiPolish() {
     tab.prepend(icon);
   });
 
+  const envCopy = $('.env-copy');
+  if (envCopy) {
+    const title = envCopy.querySelector('strong');
+    const detail = envCopy.querySelector('span');
+    if (title) title.textContent = '每个 Harness 会话固定环境白名单 + 默认环境';
+    if (detail) detail.innerHTML = '首次执行 Bash 时选择允许使用的 Conda / venv 集合和默认环境；Python 命令会在白名单内自动路由，使用 <code>/env</code> 管理。';
+    const badge = $('.env-badge');
+    if (badge) badge.textContent = 'MULTI ENV';
+  }
+
   if (logPanel && logTools && !$('#toggle-logs')) {
     const button = document.createElement('button');
     button.id = 'toggle-logs';
