@@ -77,14 +77,19 @@ function initUiPolish() {
     counter.textContent = '0';
     refreshButton?.insertAdjacentElement('beforebegin', counter);
 
-    const syncCount = () => {
-      const count = instances.querySelectorAll('.instance').length;
-      counter.textContent = String(count);
-      counter.title = `${count} 个 Harness 实例`;
-      counter.classList.toggle('active', count > 0);
+    const syncInstances = () => {
+      const cards = [...instances.querySelectorAll('.instance')];
+      counter.textContent = String(cards.length);
+      counter.title = `${cards.length} 个 Harness 实例`;
+      counter.classList.toggle('active', cards.length > 0);
+      for (const card of cards) {
+        const pill = card.querySelector('.pill');
+        const terminal = pill?.classList.contains('error') || pill?.classList.contains('stopped');
+        if (terminal) card.querySelector('.instance-action.open')?.remove();
+      }
     };
-    syncCount();
-    new MutationObserver(syncCount).observe(instances, { childList: true, subtree: true });
+    syncInstances();
+    new MutationObserver(syncInstances).observe(instances, { childList: true, subtree: true });
   }
 
   const filesMessage = $('#files-message');
