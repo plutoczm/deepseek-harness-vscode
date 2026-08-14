@@ -4,4 +4,3 @@ src/**
 node_modules/**/.cache/**
 *.map
 .gitignore
-python/__pycache__/**
