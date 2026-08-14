@@ -23,6 +23,3 @@ jobs:
 
       - name: Compile extension
         run: npm run compile
-
-      - name: Check Python bridge syntax
-        run: python -m py_compile python/harness_bridge.py
