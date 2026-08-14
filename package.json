@@ -69,7 +69,10 @@
     "compile": "tsc -p ./",
     "watch": "tsc -w -p ./",
     "package": "npm run compile && vsce package --out deepseek-harness-vscode.vsix",
-    "check": "npm run compile"
+    "check": "npm run compile",
+    "remote": "npm --prefix remote start",
+    "remote:check": "npm --prefix remote run check",
+    "remote:test": "npm --prefix remote test"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

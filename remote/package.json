@@ -1,0 +1,16 @@
+{
+  "name": "deepseek-harness-remote",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Launch the official DeepSeek Harness on SSH hosts with per-session Python environment selection.",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "start:no-open": "node src/server.mjs --no-open",
+    "check": "node --check src/config.mjs && node --check src/ssh.mjs && node --check src/manager.mjs && node --check src/server.mjs && node --check public/app.js && node --check harness-plugin/index.js && bash -n harness-plugin/bash-env.sh && bash test/bash-env.test.sh",
+    "test": "node --test test/*.test.mjs"
+  }
+}

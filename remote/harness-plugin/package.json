@@ -1,0 +1,6 @@
+{
+  "name": "deepseek-harness-remote-session-env",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./index.js"
+}
