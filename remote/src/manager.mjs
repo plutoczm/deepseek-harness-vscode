@@ -75,6 +75,7 @@ export class HarnessManager {
       instance.nodeVersion = runtime.version;
       instance.nodeSource = runtime.source;
       this.appendLog(instance, `[launcher] Node ${runtime.version} (${runtime.source})\n`);
+      if (runtime.condaPath) this.appendLog(instance, `[launcher] Conda ${runtime.condaPath}\n`);
 
       await deployPlugin(host, this.pluginDirectory);
       this.appendLog(instance, '[launcher] Session environment plugin deployed.\n');
@@ -94,6 +95,7 @@ export class HarnessManager {
         localPort,
         remotePort,
         runtimeBin: runtime.path,
+        condaPath: runtime.condaPath,
         instanceId: instance.id,
         onLog: (chunk) => this.appendLog(instance, chunk),
       });
