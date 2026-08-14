@@ -8,8 +8,19 @@ const logs = $('#log-view');
 const logTitle = $('#log-title');
 const launchStatus = $('#launch-status');
 const copyLogsButton = $('#copy-logs');
+const filesPath = $('#files-path');
+const filesHostLabel = $('#files-host-label');
+const filesMessage = $('#files-message');
+const remoteFileList = $('#remote-file-list');
+const filePreview = $('#file-preview');
+const previewName = $('#preview-name');
+const previewPath = $('#preview-path');
+const copyFilePathButton = $('#copy-file-path');
 let selectedLog = '';
 let lastLogText = '';
+let currentFilesDirectory = '/';
+let currentFilesParent = '/';
+let selectedFilePath = '';
 
 async function api(url, options = {}) {
   const response = await fetch(url, { headers: { 'content-type': 'application/json' }, ...options });
@@ -34,11 +45,48 @@ function statusLabel(status) {
   return ({ preparing: '准备中', starting: '启动中', running: '运行中', stopping: '停止中', stopped: '已停止', error: '错误' })[status] || status;
 }
 
+function formatBytes(bytes) {
+  const value = Number(bytes) || 0;
+  if (value < 1024) return `${value} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let scaled = value;
+  let index = -1;
+  do {
+    scaled /= 1024;
+    index += 1;
+  } while (scaled >= 1024 && index < units.length - 1);
+  return `${scaled >= 10 ? scaled.toFixed(0) : scaled.toFixed(1)} ${units[index]}`;
+}
+
+function formatDate(value) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(date).replaceAll('/', '-');
+}
+
+function fileTypeLabel(type) {
+  return ({ directory: '目录', file: '文件', symlink: '链接', other: '其他' })[type] || type;
+}
+
+function setView(name) {
+  document.querySelectorAll('.view-tab').forEach((button) => button.classList.toggle('active', button.dataset.view === name));
+  $('#launch-view').classList.toggle('hidden', name !== 'launch');
+  $('#files-view').classList.toggle('hidden', name !== 'files');
+  if (name === 'files') {
+    filesHostLabel.textContent = host.value.trim() || '未选择服务器';
+    if (host.value.trim()) loadRemoteFiles(filesPath.value || currentFilesDirectory || '/').catch(() => undefined);
+  }
+}
+
 async function loadHosts() {
   const data = await api('/api/hosts');
   $('#ssh-config').textContent = data.configPath ? `SSH config · ${data.configPath}` : '可直接输入 SSH alias';
   $('#hosts').innerHTML = data.hosts.map((item) => `<option value="${esc(item)}"></option>`).join('');
   if (!host.value && data.hosts[0]) host.value = data.hosts[0];
+  filesHostLabel.textContent = host.value || '未选择服务器';
 }
 
 function renderCheck(data) {
@@ -132,6 +180,115 @@ async function launch() {
   }
 }
 
+function renderRemoteEntries(data) {
+  if (!data.entries.length) {
+    remoteFileList.className = 'remote-file-list empty-file-list';
+    remoteFileList.innerHTML = '<div class="file-empty"><span>◇</span><strong>目录为空</strong><small>这里没有可显示的文件或子目录。</small></div>';
+    return;
+  }
+  remoteFileList.className = 'remote-file-list';
+  remoteFileList.innerHTML = data.entries.map((entry) => {
+    const directory = entry.type === 'directory';
+    const iconClass = directory ? 'directory' : entry.type === 'symlink' ? 'symlink' : 'file';
+    return `<button class="remote-file-row" data-file-path="${esc(entry.path)}" data-file-type="${esc(entry.type)}" title="${esc(entry.path)}">
+      <span class="remote-file-name"><span class="file-icon ${iconClass}" aria-hidden="true"></span><span class="file-name-copy"><strong>${esc(entry.name)}</strong><small>${esc(fileTypeLabel(entry.type))}</small></span></span>
+      <span class="remote-file-size">${directory ? '—' : esc(formatBytes(entry.size))}</span>
+      <span class="remote-file-date">${esc(formatDate(entry.mtime))}</span>
+    </button>`;
+  }).join('');
+  remoteFileList.querySelectorAll('[data-file-path]').forEach((row) => {
+    row.onclick = () => {
+      if (row.dataset.fileType === 'directory') loadRemoteFiles(row.dataset.filePath);
+      else previewRemoteFile(row.dataset.filePath);
+    };
+  });
+}
+
+async function loadRemoteFiles(path = filesPath.value || '/') {
+  const selectedHost = host.value.trim();
+  if (!selectedHost) {
+    filesMessage.textContent = '请先在 Harness 页选择 SSH 服务器。';
+    filesMessage.className = 'files-message bad';
+    return;
+  }
+  filesHostLabel.textContent = selectedHost;
+  filesMessage.textContent = `正在读取 ${path} …`;
+  filesMessage.className = 'files-message';
+  try {
+    const data = await api(`/api/files?host=${encodeURIComponent(selectedHost)}&path=${encodeURIComponent(path || '/')}`);
+    currentFilesDirectory = data.current;
+    currentFilesParent = data.parent;
+    filesPath.value = data.current;
+    filesMessage.textContent = `${data.entries.length} 个项目 · ${data.current}`;
+    filesMessage.className = 'files-message';
+    renderRemoteEntries(data);
+  } catch (error) {
+    filesMessage.textContent = error.message;
+    filesMessage.className = 'files-message bad';
+    remoteFileList.className = 'remote-file-list empty-file-list';
+    remoteFileList.innerHTML = `<div class="file-empty error"><span>!</span><strong>无法读取目录</strong><small>${esc(error.message)}</small></div>`;
+  }
+}
+
+function renderPreview(data) {
+  selectedFilePath = data.path;
+  previewName.textContent = data.name;
+  previewPath.textContent = data.path;
+  copyFilePathButton.disabled = false;
+
+  if (data.kind === 'image') {
+    filePreview.className = 'file-preview image-preview';
+    filePreview.innerHTML = `<img src="data:${esc(data.mime)};base64,${data.base64}" alt="${esc(data.name)}"><div class="preview-meta">${esc(formatBytes(data.size))}</div>`;
+    return;
+  }
+
+  if (data.kind === 'text') {
+    const notice = data.truncated ? `<div class="preview-notice">文件较大，仅显示前 ${esc(formatBytes(data.previewLimit))}。</div>` : '';
+    filePreview.className = 'file-preview text-preview';
+    filePreview.innerHTML = `${notice}<pre class="preview-code"></pre>`;
+    filePreview.querySelector('.preview-code').textContent = data.content || '';
+    return;
+  }
+
+  filePreview.className = 'file-preview empty-preview';
+  filePreview.innerHTML = `<div class="preview-empty-icon">◫</div><strong>二进制文件</strong><span>${esc(formatBytes(data.size))} · 当前仅显示文件信息，不直接解析内容。</span>`;
+}
+
+async function previewRemoteFile(path) {
+  const selectedHost = host.value.trim();
+  previewName.textContent = '加载中…';
+  previewPath.textContent = path;
+  filePreview.className = 'file-preview empty-preview';
+  filePreview.innerHTML = '<div class="preview-spinner"></div><span>正在通过 SSH 读取文件…</span>';
+  copyFilePathButton.disabled = true;
+  try {
+    renderPreview(await api(`/api/file?host=${encodeURIComponent(selectedHost)}&path=${encodeURIComponent(path)}`));
+  } catch (error) {
+    selectedFilePath = path;
+    previewName.textContent = path.split('/').at(-1) || path;
+    previewPath.textContent = path;
+    copyFilePathButton.disabled = false;
+    filePreview.className = 'file-preview empty-preview';
+    filePreview.innerHTML = `<div class="preview-empty-icon error">!</div><strong>无法预览</strong><span>${esc(error.message)}</span>`;
+  }
+}
+
+function useFilesDirectoryAsWorkspace() {
+  workspace.value = currentFilesDirectory || filesPath.value || '/';
+  launchStatus.textContent = `已选择工作区 · ${workspace.value}`;
+  launchStatus.className = 'launch-status good';
+  setView('launch');
+  workspace.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+async function copyFilePath() {
+  if (!selectedFilePath) return;
+  await navigator.clipboard.writeText(selectedFilePath);
+  const original = copyFilePathButton.textContent;
+  copyFilePathButton.textContent = '已复制';
+  setTimeout(() => { copyFilePathButton.textContent = original; }, 1200);
+}
+
 function card(instance) {
   const terminalUrl = instance.url ? `<a class="instance-action open" href="${esc(instance.url)}" target="_blank" rel="noopener">打开 Harness</a>` : '';
   const stop = !['stopped', 'error'].includes(instance.status) ? `<button class="instance-action" data-stop="${esc(instance.id)}">停止</button>` : '';
@@ -190,12 +347,23 @@ async function copyLogs() {
   setTimeout(() => { copyLogsButton.textContent = original; }, 1200);
 }
 
+document.querySelectorAll('.view-tab').forEach((button) => { button.onclick = () => setView(button.dataset.view); });
 $('#check').onclick = check;
 $('#browse').onclick = () => browse();
 $('#launch').onclick = launch;
 $('#refresh').onclick = refresh;
+$('#files-go').onclick = () => loadRemoteFiles(filesPath.value || '/');
+$('#files-up').onclick = () => loadRemoteFiles(currentFilesParent || '/');
+$('#files-refresh').onclick = () => loadRemoteFiles(currentFilesDirectory || filesPath.value || '/');
+$('#files-use-workspace').onclick = useFilesDirectoryAsWorkspace;
+filesPath.addEventListener('keydown', (event) => { if (event.key === 'Enter') loadRemoteFiles(filesPath.value || '/'); });
+copyFilePathButton.onclick = copyFilePath;
 copyLogsButton.onclick = copyLogs;
-host.addEventListener('change', () => checkBox.classList.add('hidden'));
+host.addEventListener('change', () => {
+  checkBox.classList.add('hidden');
+  filesHostLabel.textContent = host.value.trim() || '未选择服务器';
+  selectedFilePath = '';
+});
 loadHosts().catch((error) => { $('#ssh-config').textContent = error.message; });
 refresh();
 setInterval(refresh, 4000);
