@@ -6,15 +6,16 @@ const V4_MODEL_PRICES = Object.freeze({
   'deepseek-reasoner': Object.freeze({ cacheHit: 0.02, cacheMiss: 1, output: 2 }),
 });
 
-// Current official pricing has no recurring off-peak window. The schedule shape
-// intentionally supports future effective-date and time-of-day rules so a later
-// DeepSeek pricing change can be represented without changing the accounting
-// pipeline. Time-window selection is anchored to request start time.
+// Pricing is versioned by effective time. DeepSeek announced another V4
+// peak/off-peak change for 2026-08-17; until the complete official CNY table is
+// published, deliberately stop the old flat schedule at that boundary instead
+// of silently producing a stale money figure. Token telemetry remains exact and
+// the new schedule can be added without changing the accounting pipeline.
 const PRICE_SCHEDULES = Object.freeze([
   Object.freeze({
-    id: 'deepseek-v4-standard-2026-04-24',
+    id: 'deepseek-v4-standard-through-2026-08-16',
     effectiveFrom: '2026-04-24T00:00:00+08:00',
-    effectiveTo: null,
+    effectiveTo: '2026-08-17T00:00:00+08:00',
     timeZone: 'Asia/Shanghai',
     models: V4_MODEL_PRICES,
     windows: Object.freeze([]),
