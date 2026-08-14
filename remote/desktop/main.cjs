@@ -7,12 +7,14 @@ const { pathToFileURL } = require('node:url');
 const APP_ID = 'io.github.plutoczm.deepseek-harness-remote';
 const APP_NAME = 'DeepSeek Harness Remote';
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost']);
+const TERMINAL_INSTANCE_STATUSES = new Set(['stopped', 'error']);
 
 let mainWindow;
 let remoteModule;
 let quitting = false;
 let launcherUrl;
 let launcherPort;
+let instanceLifecycleUnsubscribe;
 const usageSubscriptions = new Map();
 
 app.setName(APP_NAME);
@@ -103,16 +105,16 @@ function usageWidgetScript() {
       const session = payload?.session;
       if (!payload?.available || !session) {
         widget.dataset.waiting = '1';
-        live.textContent = '等待 usage';
+        live.textContent = payload?.active === false ? '已断开' : '等待 usage';
         cost.textContent = '¥0.000000';
         metrics[0].textContent = '—';
         metrics[1].textContent = '—';
         metrics[2].textContent = '—';
-        note.textContent = '模型返回 usage 后立即更新 · 不调用 /user/balance';
+        note.textContent = payload?.active === false ? 'SSH 已结束 · Harness 会话同步停止' : '模型返回 usage 后立即更新 · 不调用 /user/balance';
         return;
       }
-      widget.dataset.waiting = '0';
-      live.textContent = '实时事件';
+      widget.dataset.waiting = payload?.active === false ? '1' : '0';
+      live.textContent = payload?.active === false ? '已断开' : '实时事件';
       cost.textContent = session.pricingKnown ? money(session.costCny) : money(session.costCny) + ' + 未定价';
       metrics[0].textContent = compact(session.inputTokens);
       metrics[1].textContent = compact(session.outputTokens);
@@ -120,7 +122,9 @@ function usageWidgetScript() {
       const last = session.last || {};
       const lastCost = last.pricingKnown ? money(last.costCny) : '未定价';
       const model = session.model || 'unknown model';
-      note.textContent = model + ' · 本次 ' + lastCost + ' · ' + (session.requests || 0) + ' 次 usage';
+      note.textContent = payload?.active === false
+        ? 'SSH 已结束 · Harness 会话同步停止'
+        : model + ' · 本次 ' + lastCost + ' · ' + (session.requests || 0) + ' 次 usage';
     };
   })();`;
 }
@@ -170,6 +174,26 @@ async function attachUsageOverlay(contents) {
     const current = usageSubscriptions.get(contents.id);
     current?.unsubscribe?.();
     usageSubscriptions.delete(contents.id);
+  });
+}
+
+function closeHarnessWindowsForInstance(instance) {
+  if (!instance?.id || !TERMINAL_INSTANCE_STATUSES.has(instance.status)) return;
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (window === mainWindow || window.isDestroyed()) continue;
+    const matched = findInstanceForContents(window.webContents);
+    if (matched?.id !== instance.id) continue;
+    pushUsageSnapshot(window.webContents, remoteModule.manager.usage(instance.id)).catch(() => undefined);
+    setTimeout(() => {
+      if (!window.isDestroyed()) window.close();
+    }, 120);
+  }
+}
+
+function bindInstanceLifecycle() {
+  instanceLifecycleUnsubscribe?.();
+  instanceLifecycleUnsubscribe = remoteModule?.manager?.onInstanceStatus?.(null, (instance) => {
+    closeHarnessWindowsForInstance(instance);
   });
 }
 
@@ -252,6 +276,7 @@ async function startEmbeddedLauncher() {
 
   const entry = pathToFileURL(path.resolve(__dirname, '../src/server.mjs')).href;
   remoteModule = await import(entry);
+  bindInstanceLifecycle();
   await waitForHealth(port);
   launcherPort = port;
   launcherUrl = `http://127.0.0.1:${port}`;
@@ -280,6 +305,8 @@ function createMainWindow(url) {
 }
 
 async function stopEmbeddedLauncher() {
+  instanceLifecycleUnsubscribe?.();
+  instanceLifecycleUnsubscribe = undefined;
   for (const subscription of usageSubscriptions.values()) subscription.unsubscribe?.();
   usageSubscriptions.clear();
   await remoteModule?.manager?.stopAll?.().catch(() => undefined);
