@@ -1,8 +1,8 @@
 # DeepSeek Harness for VS Code
 
-A thin VS Code launcher for the **official DeepSeek Harness Web UI**, with first-class **Remote SSH** support.
+A thin VS Code launcher for the **official DeepSeek Harness Web UI**, with first-class **Remote SSH** support and per-session Python/Conda environment selection on Bash-based hosts.
 
-This extension does **not** reimplement the DeepSeek agent, chat UI, sessions, file tools, Bash tools, or model configuration. It starts the official Harness on the current VS Code workspace host and lets VS Code expose that UI to you.
+This extension does **not** reimplement the DeepSeek agent, chat UI, sessions, file tools, Bash tools, or model configuration. It starts the official Harness on the current VS Code workspace host, adds a small session-environment integration, and lets VS Code expose the official UI to you.
 
 > DeepSeek Harness is currently in developer preview and may introduce breaking changes.
 
@@ -36,17 +36,13 @@ For Remote SSH, connect to the Linux server first. In the Extensions view, make 
 When you run **DeepSeek Harness: Open in VS Code**, the extension:
 
 1. Finds the current VS Code workspace folder.
-2. Runs the official Harness from that folder:
+2. Installs its small session-environment host plugin into the Harness module fallback under `$DSH_HOME` and supplies it through a temporary Harness `--patch` overlay.
+3. Runs the official Harness from the workspace folder on port `3080`.
+4. Waits for the Harness Web UI to become available on `127.0.0.1:3080`.
+5. Calls `vscode.env.asExternalUri(...)` so Remote SSH ports are reachable from the local VS Code client.
+6. Opens the forwarded URL in VS Code's built-in Simple Browser.
 
-   ```bash
-   npx --yes @deepseek-ai/dsh --profile web --port 3080
-   ```
-
-3. Waits for the Harness Web UI to become available on `127.0.0.1:3080`.
-4. Calls `vscode.env.asExternalUri(...)` so Remote SSH ports are reachable from the local VS Code client.
-5. Opens the forwarded URL in VS Code's built-in Simple Browser.
-
-The invoking directory is therefore the Harness workspace.
+The invoking directory is therefore the Harness workspace. The extension does not require `pnpm` on the remote host; Node.js/npm/npx are sufficient for the launcher path.
 
 ## Architecture
 
@@ -57,7 +53,7 @@ Local VS Code
     │
     ├─ extension
     │    │
-    │    └─ npx @deepseek-ai/dsh --profile web --port 3080
+    │    └─ npx @deepseek-ai/dsh --profile web ... --port 3080
     │
     └─ official DeepSeek Harness Web UI
 ```
@@ -80,6 +76,8 @@ Remote Linux server (no GUI required)
 │ VS Code Server / Extension Host     │
 │                                     │
 │ deepseek-harness-vscode             │
+│          │                          │
+│          ├─ session-env integration │
 │          │                          │
 │          ▼                          │
 │ npx @deepseek-ai/dsh                │
@@ -126,7 +124,63 @@ The extension declares:
 
 so under Remote SSH the launcher itself runs inside the remote VS Code Extension Host. The `dsh` process, Bash commands, and file access therefore operate on the remote Linux workspace.
 
-## Commands
+## Per-session Python / Conda environments
+
+On Linux/macOS Bash-based Harness sessions, every official Harness session can use a different Python environment.
+
+When a session reaches its **first Bash tool call**, the integration checks whether that session already has an environment selection. If not, it detects available environments and presents the official Harness option picker before the Bash command runs. If no alternate environment is detected, the Harness default environment is selected automatically.
+
+Detected choices include:
+
+- `./.venv`
+- `./venv`
+- `./env`
+- environments returned by `conda env list --json`
+- the environment inherited by the Harness process
+
+The selection is keyed by the official Harness session ID. For example:
+
+```text
+Session A → .venv
+Session B → conda: pytorch
+Session C → Harness default
+```
+
+Those sessions can remain open simultaneously without changing each other's future Bash environment.
+
+### `/env` command
+
+The integration registers a normal Harness slash command:
+
+```text
+/env
+```
+
+Use it at any time in the current session to open the environment picker and switch environments.
+
+Other forms:
+
+```text
+/env status
+/env system
+/env .venv
+/env conda: pytorch
+/env /home/user/miniconda3/envs/pytorch
+```
+
+`/env status` shows the current binding. `/env system` returns the session to the environment inherited by Harness. A relative or absolute environment directory can be supplied directly when it is not in the detected list.
+
+### How session isolation works
+
+Official Harness Bash calls are separate non-interactive `bash -c` processes, so a one-time `source .venv/bin/activate` would not persist. Instead, the launcher supplies a small `BASH_ENV` bootstrap. Every Bash process receives the official `DSH_SESSION_ID`, and the bootstrap loads only that session's saved environment file before the command executes.
+
+The environment selection therefore affects **future Harness Bash calls in that session**. It does not activate the user's SSH terminal and does not alter another Harness session. A Bash process that is already running keeps the environment with which it started.
+
+Harness-created subagents inherit their parent session's environment instead of opening an interaction that a delegated agent cannot answer.
+
+Current scope: this feature targets the Harness **Bash execution path on Linux/macOS**, especially VS Code Remote SSH to Linux. Native Windows/PowerShell session environment switching and non-Bash runtimes such as a separate Code Mode worker are not yet remapped per session.
+
+## VS Code commands
 
 - **DeepSeek Harness: Open in VS Code** — start if necessary and open the official UI in VS Code.
 - **DeepSeek Harness: Open in Browser** — start if necessary and open the forwarded UI in your normal browser.
@@ -166,6 +220,8 @@ You do not need to expose port 3080 publicly on the Linux server.
 If the configured port is already listening when the extension starts, the extension reuses that service rather than launching a duplicate process.
 
 For safety, **Stop** only terminates a process owned by this extension. It will not kill an unknown process that was already listening on the configured port.
+
+Per-session `/env` integration is guaranteed only when the Harness process was started by this extension, because an already-running external process cannot retroactively receive the patch or `BASH_ENV` launch environment.
 
 ## Development
 
