@@ -8,8 +8,11 @@ import {
   waitForHttp,
 } from './ssh.mjs';
 import { validateHost, validateRemotePath } from './config.mjs';
+import { balanceDelta, readDeepSeekBalance } from './billing.mjs';
+import { clearRemoteProxyEnvironment, startLocalProxyBridge } from './network.mjs';
 
 const MAX_LOG_CHARS = 250_000;
+const BALANCE_CACHE_MS = 8000;
 
 export class HarnessManager {
   constructor(pluginDirectory) {
@@ -30,6 +33,13 @@ export class HarnessManager {
       nodeSource: instance.nodeSource,
       createdAt: instance.createdAt,
       error: instance.error,
+      network: instance.network ? {
+        enabled: Boolean(instance.network.enabled),
+        mode: instance.network.mode || 'remote-direct',
+        localProxyHost: instance.network.localProxyHost,
+        localProxyPort: instance.network.localProxyPort,
+        remoteProxyPort: instance.network.remoteProxyPort,
+      } : undefined,
     };
   }
 
@@ -51,6 +61,33 @@ export class HarnessManager {
   appendLog(instance, chunk) {
     instance.logs += chunk;
     if (instance.logs.length > MAX_LOG_CHARS) instance.logs = instance.logs.slice(-MAX_LOG_CHARS);
+  }
+
+  async balance(id, { force = false } = {}) {
+    const instance = this.instances.get(id);
+    if (!instance) return undefined;
+    const now = Date.now();
+    if (!force && instance.balanceLatest && now - (instance.balanceLatestAt || 0) < BALANCE_CACHE_MS) {
+      return instance.balanceLatest;
+    }
+    let current;
+    try {
+      current = await readDeepSeekBalance(instance.host);
+    } catch (error) {
+      current = { available: false, error: error instanceof Error ? error.message : String(error) };
+    }
+    if (!instance.balanceBaseline?.available && current.available) {
+      instance.balanceBaseline = current;
+    }
+    const result = {
+      ...current,
+      delta: balanceDelta(instance.balanceBaseline, current),
+      baselineAt: instance.balanceBaseline?.sampledAt || instance.createdAt,
+      note: 'Instance spend is derived from the account balance decrease since this instance started. Concurrent use of the same API key can affect this delta.',
+    };
+    instance.balanceLatest = result;
+    instance.balanceLatestAt = now;
+    return result;
   }
 
   async launch({ host: hostInput, workspace: workspaceInput, installRuntime = true }) {
@@ -83,6 +120,29 @@ export class HarnessManager {
 
       await deployPlugin(host, this.pluginDirectory);
       this.appendLog(instance, '[launcher] Session environment plugin deployed.\n');
+
+      try {
+        instance.balanceBaseline = await readDeepSeekBalance(host);
+        if (instance.balanceBaseline.available) {
+          this.appendLog(instance, '[billing] DeepSeek account balance baseline captured for this instance.\n');
+        } else {
+          this.appendLog(instance, `[billing] Balance unavailable: ${instance.balanceBaseline.error || 'unknown reason'}\n`);
+        }
+      } catch (error) {
+        this.appendLog(instance, `[billing] Balance probe failed: ${error instanceof Error ? error.message : String(error)}\n`);
+      }
+
+      try {
+        instance.network = await startLocalProxyBridge({
+          host,
+          instanceId: instance.id,
+          runtimeBin: runtime.path,
+          onLog: (chunk) => this.appendLog(instance, chunk),
+        });
+      } catch (error) {
+        instance.network = { enabled: false, mode: 'remote-direct', localProxyHost: '127.0.0.1', localProxyPort: 7890 };
+        this.appendLog(instance, `[network] Local VPN bridge was not enabled: ${error instanceof Error ? error.message : String(error)}\n`);
+      }
 
       const [localPort, remotePort] = await Promise.all([
         findLocalFreePort(),
@@ -126,6 +186,8 @@ export class HarnessManager {
       instance.error = error instanceof Error ? error.message : String(error);
       this.appendLog(instance, `[launcher] ERROR: ${instance.error}\n`);
       if (instance.child?.exitCode === null) instance.child.kill('SIGTERM');
+      if (instance.network?.child?.exitCode === null) instance.network.child.kill('SIGTERM');
+      await clearRemoteProxyEnvironment(instance.host, instance.id).catch(() => undefined);
       throw Object.assign(new Error(instance.error), { instanceId: instance.id });
     }
   }
@@ -143,6 +205,9 @@ export class HarnessManager {
       });
       if (child.exitCode === null) child.kill('SIGKILL');
     }
+    const proxyChild = instance.network?.child;
+    if (proxyChild && proxyChild.exitCode === null) proxyChild.kill('SIGTERM');
+    await clearRemoteProxyEnvironment(instance.host, instance.id).catch(() => undefined);
     instance.status = 'stopped';
     this.appendLog(instance, '[launcher] Stopped.\n');
     return true;

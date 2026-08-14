@@ -142,6 +142,14 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    const balanceId = instanceIdFrom(url.pathname, 'balance');
+    if (balanceId && request.method === 'GET') {
+      const balance = await manager.balance(balanceId);
+      if (!balance) json(response, 404, { error: 'Instance not found.' });
+      else json(response, 200, balance);
+      return;
+    }
+
     const instanceId = instanceIdFrom(url.pathname);
     if (instanceId && request.method === 'DELETE') {
       const stopped = await manager.stop(instanceId);
