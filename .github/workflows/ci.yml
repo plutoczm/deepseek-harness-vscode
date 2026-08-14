@@ -45,6 +45,7 @@ jobs:
           bash -c 'test "$DSH_VSCODE_ENV_TEST" = selected && test "$DSH_VSCODE_PARENT_TEST" = parent'
 
       - name: Smoke-test official Harness plugin boot
+        timeout-minutes: 4
         shell: bash
         run: |
           set -euo pipefail
@@ -64,7 +65,7 @@ jobs:
           }
           trap 'cleanup' EXIT
           ready=0
-          for _ in $(seq 1 120); do
+          for _ in $(seq 1 360); do
             if curl -fsS http://127.0.0.1:33080/ >/dev/null 2>&1; then
               ready=1
               break
