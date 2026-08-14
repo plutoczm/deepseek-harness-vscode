@@ -44,6 +44,44 @@ jobs:
           BASH_ENV="$PWD/harness-plugin/bash-env.sh" \
           bash -c 'test "$DSH_VSCODE_ENV_TEST" = selected && test "$DSH_VSCODE_PARENT_TEST" = parent'
 
+      - name: Smoke-test official Harness plugin boot
+        shell: bash
+        run: |
+          set -euo pipefail
+          export DSH_HOME="$RUNNER_TEMP/dsh-vscode-smoke"
+          export DEEPSEEK_HARNESS_SESSION_ENV_DIR="$RUNNER_TEMP/dsh-vscode-session-env"
+          export DEEPSEEK_HARNESS_BASE_PATH="$PATH"
+          export BASH_ENV="$PWD/harness-plugin/bash-env.sh"
+          plugin_dir="$DSH_HOME/profiles/node_modules/deepseek-harness-vscode-session-env"
+          mkdir -p "$plugin_dir" "$DEEPSEEK_HARNESS_SESSION_ENV_DIR"
+          cp harness-plugin/package.json harness-plugin/index.js "$plugin_dir/"
+          log="$RUNNER_TEMP/deepseek-harness-web.log"
+          npx --yes @deepseek-ai/dsh --profile web --patch "$PWD/harness-plugin/cordis.patch.yml" --port 33080 >"$log" 2>&1 &
+          pid=$!
+          cleanup() {
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+          }
+          trap 'cleanup' EXIT
+          ready=0
+          for _ in $(seq 1 120); do
+            if curl -fsS http://127.0.0.1:33080/ >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            if ! kill -0 "$pid" 2>/dev/null; then
+              cat "$log"
+              exit 1
+            fi
+            sleep 0.5
+          done
+          if [ "$ready" -ne 1 ]; then
+            cat "$log"
+            exit 1
+          fi
+          cleanup
+          trap - EXIT
+
       - name: Package VSIX
         run: npm run package
 
