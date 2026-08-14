@@ -32,6 +32,20 @@ jobs:
         run: npm test
       - name: Build Windows installer
         run: npm run desktop:win
+      - name: Verify packaged PDF.js runtime
+        shell: pwsh
+        run: |
+          $required = @(
+            'dist/win-unpacked/resources/pdfjs-dist/build/pdf.mjs',
+            'dist/win-unpacked/resources/pdfjs-dist/build/pdf.worker.mjs',
+            'dist/win-unpacked/resources/pdfjs-dist/cmaps/UniJIS-UTF16-H.bcmap',
+            'dist/win-unpacked/resources/pdfjs-dist/standard_fonts/FoxitSans.pfb'
+          )
+          foreach ($path in $required) {
+            if (!(Test-Path $path)) { throw "Missing packaged PDF.js asset: $path" }
+          }
+          $wasm = Get-ChildItem 'dist/win-unpacked/resources/pdfjs-dist/wasm' -Filter '*.wasm' -ErrorAction Stop
+          if ($wasm.Count -lt 1) { throw 'No packaged PDF.js WASM assets found.' }
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
