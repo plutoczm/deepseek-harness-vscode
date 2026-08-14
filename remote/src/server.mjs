@@ -119,6 +119,7 @@ const server = http.createServer(async (request, response) => {
           host: body.host,
           workspace: body.workspace,
           installRuntime: body.installRuntime !== false,
+          enableLocalProxy: body.enableLocalProxy === true,
         }));
       } catch (error) {
         json(response, 500, {
