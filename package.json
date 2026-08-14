@@ -2,14 +2,18 @@
   "name": "deepseek-harness-vscode",
   "displayName": "DeepSeek Harness",
   "description": "Launch the official DeepSeek Harness Web UI from VS Code with Remote SSH and per-session Python environment support.",
-  "version": "0.4.0-alpha.1",
+  "version": "0.4.0",
   "publisher": "plutoczm",
   "license": "MIT",
+  "pricing": "Free",
   "repository": {
     "type": "git",
     "url": "https://github.com/plutoczm/deepseek-harness-vscode.git"
   },
   "homepage": "https://github.com/plutoczm/deepseek-harness-vscode#readme",
+  "bugs": {
+    "url": "https://github.com/plutoczm/deepseek-harness-vscode/issues"
+  },
   "engines": {
     "vscode": "^1.100.0"
   },
@@ -61,6 +65,7 @@
     }
   },
   "scripts": {
+    "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -w -p ./",
     "package": "npm run compile && vsce package --out deepseek-harness-vscode.vsix",
