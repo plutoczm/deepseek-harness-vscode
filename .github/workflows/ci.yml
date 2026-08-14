@@ -24,11 +24,35 @@ jobs:
       - name: Compile extension
         run: npm run compile
 
+      - name: Check Harness plugin syntax
+        run: |
+          node --check harness-plugin/index.js
+          bash -n harness-plugin/bash-env.sh
+
+      - name: Test per-session Bash bootstrap
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          mkdir -p "$tmp/session-env"
+          printf 'export DSH_VSCODE_ENV_TEST=selected\n' > "$tmp/session-env/session_1.sh"
+          printf 'export DSH_VSCODE_PARENT_TEST=parent\n' > "$tmp/parent-bash-env.sh"
+          DSH_SESSION_ID='session/1' \
+          DEEPSEEK_HARNESS_SESSION_ENV_DIR="$tmp/session-env" \
+          DEEPSEEK_HARNESS_PARENT_BASH_ENV="$tmp/parent-bash-env.sh" \
+          BASH_ENV="$PWD/harness-plugin/bash-env.sh" \
+          bash -c 'test "$DSH_VSCODE_ENV_TEST" = selected && test "$DSH_VSCODE_PARENT_TEST" = parent'
+
       - name: Package VSIX
         run: npm run package
 
-      - name: Verify VSIX entrypoint
-        run: unzip -l deepseek-harness-vscode.vsix | grep -F 'extension/dist/extension.js'
+      - name: Verify VSIX contents
+        run: |
+          unzip -l deepseek-harness-vscode.vsix | grep -F 'extension/dist/extension.js'
+          unzip -l deepseek-harness-vscode.vsix | grep -F 'extension/harness-plugin/index.js'
+          unzip -l deepseek-harness-vscode.vsix | grep -F 'extension/harness-plugin/bash-env.sh'
+          unzip -l deepseek-harness-vscode.vsix | grep -F 'extension/harness-plugin/cordis.patch.yml'
 
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v4
