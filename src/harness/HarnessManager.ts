@@ -29,6 +29,7 @@ export class HarnessManager implements vscode.Disposable {
   private process?: ChildProcessWithoutNullStreams;
   private stdoutBuffer = '';
   private sessionId: string;
+  private bridgeReportedError = false;
   private readonly messageEmitter = new vscode.EventEmitter<HarnessBridgeMessage>();
   readonly onMessage = this.messageEmitter.event;
 
@@ -76,7 +77,11 @@ export class HarnessManager implements vscode.Disposable {
   }
 
   async restart(): Promise<void> {
-    await this.stop();
+    await this.stop(false);
+  }
+
+  async interrupt(): Promise<void> {
+    await this.stop(true);
   }
 
   async installOrUpgradeRuntime(): Promise<void> {
@@ -124,6 +129,7 @@ export class HarnessManager implements vscode.Disposable {
     const bridgePath = this.context.asAbsolutePath(path.join('python', 'harness_bridge.py'));
     const workspace = this.workspacePath();
     const sessionRoot = path.join(this.context.globalStorageUri.fsPath, 'sessions');
+    this.bridgeReportedError = false;
 
     this.process = spawn(python, ['-u', bridgePath], {
       cwd: workspace,
@@ -149,10 +155,11 @@ export class HarnessManager implements vscode.Disposable {
       }
     });
     this.process.on('error', (error) => {
+      this.bridgeReportedError = true;
       this.messageEmitter.fire({ type: 'error', message: error.message });
     });
     this.process.on('exit', (code, signal) => {
-      if (code !== 0 && code !== null) {
+      if (code !== 0 && code !== null && !this.bridgeReportedError) {
         this.messageEmitter.fire({
           type: 'error',
           message: `Harness bridge exited with code ${code}${signal ? ` (${signal})` : ''}.`,
@@ -172,8 +179,13 @@ export class HarnessManager implements vscode.Disposable {
       this.stdoutBuffer = this.stdoutBuffer.slice(newline + 1);
       if (!line) continue;
       try {
-        this.messageEmitter.fire(JSON.parse(line) as HarnessBridgeMessage);
+        const message = JSON.parse(line) as HarnessBridgeMessage;
+        if (message.type === 'error') {
+          this.bridgeReportedError = true;
+        }
+        this.messageEmitter.fire(message);
       } catch {
+        this.bridgeReportedError = true;
         this.messageEmitter.fire({ type: 'error', message: `Invalid bridge output: ${line}` });
       }
     }
@@ -191,20 +203,24 @@ export class HarnessManager implements vscode.Disposable {
     return vscode.workspace.getConfiguration('deepseekHarness').get<T>(key, fallback);
   }
 
-  private async stop(): Promise<void> {
+  private async stop(force: boolean): Promise<void> {
     const child = this.process;
     this.process = undefined;
     if (!child || child.killed) return;
-    try {
-      child.stdin.write(JSON.stringify({ type: 'shutdown' }) + '\n');
-    } catch {
-      // Ignore a broken pipe during shutdown.
+
+    if (!force) {
+      try {
+        child.stdin.write(JSON.stringify({ type: 'shutdown' }) + '\n');
+      } catch {
+        // Ignore a broken pipe during shutdown.
+      }
     }
+
     child.kill();
   }
 
   dispose(): void {
-    void this.stop();
+    void this.stop(false);
     this.messageEmitter.dispose();
   }
 }
