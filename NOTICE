@@ -1,7 +1,7 @@
-dsh-ssh-vpn-bridge uses dsh-ssh-remote as a pinned runtime dependency and adapts the shape of its remote terminal session/backend API.
+dsh-ssh-vpn-bridge uses dsh-ssh-remote as a pinned runtime dependency for its DeepSeek Harness SSH workspace UI, alias discovery, workspace anchors, and routing model.
 
 Upstream project: https://github.com/CrazyShout/dsh-ssh-remote
 License: MIT
 Copyright belongs to the respective upstream authors/contributors.
 
-This repository's own additions include automatic direct-first GitHub reachability probing, Windows HTTP/mixed-proxy detection, SSH reverse-tunnel lifecycle management, remote proxy environment injection, and integration glue.
+This repository's own additions include a system-OpenSSH-backed remote data transport, automatic direct-first GitHub reachability probing, Windows HTTP/mixed-proxy detection, SSH reverse-tunnel lifecycle management, remote proxy environment injection, and integration glue. The bridge intentionally overrides the runtime transport so remote authentication, file operations, commands, and terminal shells use the user's existing system OpenSSH configuration rather than a second credential stack.
