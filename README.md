@@ -19,6 +19,12 @@ Harness should not ask you to re-enter the host, username, key and ProxyJump in 
 
 The remote-workspace layer uses `dsh-ssh-remote`, which discovers concrete aliases from `~/.ssh/config`, resolves effective options through the system OpenSSH client, routes Bash/terminal commands through OpenSSH, and provides SFTP-backed remote files. This package then adds a direct-first network bridge around those workspaces.
 
+## Important: use one SSH workspace provider
+
+Do **not** keep another SSH workspace/runtime plugin active at the same time as this bundle. Multiple SSH providers can compete for Harness filesystem, subprocess, terminal, and workspace routing seams and produce failures that look like an SSH authentication/network problem.
+
+Before testing this plugin, disable or uninstall competing SSH plugins such as `@captain1275/dsh-ssh`. Unrelated plugins (balance, appearance, vision routing, workshop, etc.) can stay installed.
+
 ## Network model
 
 ```text
@@ -66,10 +72,10 @@ After this branch is merged to main:
 dsh plugin --profile web add 'github:plutoczm/deepseek-harness-vscode'
 ```
 
-For testing the development branch:
+For testing the development branch, prefer an exact commit SHA so the test is reproducible:
 
 ```sh
-dsh plugin --profile web add 'github:plutoczm/deepseek-harness-vscode#feature/dsh-ssh-proxy-plugin'
+dsh plugin --profile web add 'github:plutoczm/deepseek-harness-vscode#<commit-sha>'
 ```
 
 Restart the Web profile after installation.
@@ -78,7 +84,7 @@ Restart the Web profile after installation.
 
 1. Keep SSH configuration in `~/.ssh/config` only.
 2. Open Harness Web.
-3. Use the SSH Remote workspace UI injected by the bundle.
+3. Use the SSH Remote workspace UI supplied by the bundled SSH provider.
 4. Pick an SSH alias such as `gdwyy70`.
 5. Browse and open `/mnt/ext-disk/czm2025/Projects/face_privacy_tkde` (or any other remote directory).
 6. Bash/file/terminal activity for that workspace is routed to the SSH host.
@@ -104,7 +110,7 @@ DSH_SSH_PROXY_NO_PROXY=api.deepseek.com,.deepseek.com,127.0.0.1,localhost,::1
 - SSH keys stay with system OpenSSH / your existing SSH configuration.
 - The reverse-forward listener binds to remote **127.0.0.1**, not all interfaces.
 - The plugin never reads or exports the DeepSeek API key.
-- Remote proxy environment is scoped to routed remote processes and proxy-aware remote terminal sessions.
+- Remote proxy environment is scoped to routed remote processes and remote terminal shells.
 - No sudo/root access is required.
 
 ## Upstream basis
@@ -113,6 +119,10 @@ The remote workspace dependency is pinned to `CrazyShout/dsh-ssh-remote` commit 
 
 See `NOTICE` for attribution.
 
+## Plugin-market plan
+
+After the Windows + real-SSH test is stable, this repository can be submitted to `awesome-dsh-plugin`. That registry requires a real `dsh.bundle` manifest and is consumed by the community `dsh-market`, so there is no need to build another marketplace into this project.
+
 ## Status
 
-This is the first focused implementation branch. CI covers syntax and pure network/proxy behavior. Before release, it should also be smoke-tested on Windows against a real `ssh gdwyy70`-style alias and a real mixed proxy on port 7890.
+This is the first focused implementation branch. CI covers Node 22/24, Windows OpenSSH presence, unit tests, package creation, and an official Harness packaged-plugin Web smoke test. A real Windows `ssh gdwyy70` + local mixed proxy `127.0.0.1:7890` test is still required before release/merge.
