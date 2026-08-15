@@ -67,3 +67,29 @@ jobs:
 
           cleanup
           trap - EXIT
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify Windows OpenSSH client
+        shell: pwsh
+        run: |
+          $ssh = Get-Command ssh.exe -ErrorAction Stop
+          Write-Host "OpenSSH: $($ssh.Source)"
+          ssh -V
+      - name: Install dependencies
+        run: npm install --ignore-scripts
+      - name: Syntax check
+        run: npm run check
+      - name: Unit tests
+        run: npm test
+      - name: Pack plugin
+        shell: pwsh
+        run: |
+          $package = (npm pack --silent | Select-Object -Last 1).Trim()
+          if (-not (Test-Path $package)) { throw "npm pack did not create $package" }
+          Write-Host "Packed: $package"
