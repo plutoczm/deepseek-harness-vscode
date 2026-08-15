@@ -32,15 +32,18 @@ jobs:
         run: npm test
       - name: Build Windows installer
         run: npm run desktop:win
-      - name: Verify packaged PDF.js runtime
+      - name: Verify packaged desktop runtime
         shell: pwsh
         run: |
           $required = @(
             'dist/win-unpacked/resources/pdfjs-dist/build/pdf.mjs',
-            'dist/win-unpacked/resources/pdfjs-dist/build/pdf.worker.mjs'
+            'dist/win-unpacked/resources/pdfjs-dist/build/pdf.worker.mjs',
+            'dist/win-unpacked/resources/app/node_modules/@xterm/xterm/lib/xterm.js',
+            'dist/win-unpacked/resources/app/node_modules/@xterm/addon-fit/lib/addon-fit.js',
+            'dist/win-unpacked/resources/app/node_modules/ws/index.js'
           )
           foreach ($path in $required) {
-            if (!(Test-Path $path)) { throw "Missing packaged PDF.js asset: $path" }
+            if (!(Test-Path $path)) { throw "Missing packaged desktop asset: $path" }
           }
           $assetDirs = @(
             'dist/win-unpacked/resources/pdfjs-dist/cmaps',
@@ -52,9 +55,13 @@ jobs:
             $files = Get-ChildItem $dir -File -Recurse -ErrorAction Stop
             if ($files.Count -lt 1) { throw "Packaged PDF.js asset directory is empty: $dir" }
           }
+          $ptyDir = 'dist/win-unpacked/resources/app/node_modules/node-pty'
+          if (!(Test-Path $ptyDir)) { throw "Missing packaged node-pty directory: $ptyDir" }
+          $ptyNative = Get-ChildItem $ptyDir -Filter '*.node' -File -Recurse -ErrorAction Stop
+          if ($ptyNative.Count -lt 1) { throw 'Packaged node-pty has no native .node binary.' }
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
-          name: DeepSeek-Harness-Remote-Windows-x64
+          name: DeepSeek-Harness-Desktop-Windows-x64
           path: remote/dist/*.exe
           if-no-files-found: error
