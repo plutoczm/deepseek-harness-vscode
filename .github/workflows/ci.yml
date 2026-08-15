@@ -27,3 +27,43 @@ jobs:
           node -e "const p=require('./package.json'); if(!p.dsh?.bundle?.patch) process.exit(1)"
           test -f cordis.patch.yml
           test -f src/index.js
+      - name: Smoke-test packaged plugin with official Harness
+        if: matrix.node == 22
+        timeout-minutes: 8
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install -g pnpm@10
+          export DSH_HOME="$RUNNER_TEMP/dsh-ssh-vpn-smoke"
+          package_file="$(npm pack --silent | tail -n 1)"
+
+          npx --yes @deepseek-ai/dsh plugin --profile web add "$PWD/$package_file"
+
+          log="$RUNNER_TEMP/dsh-ssh-vpn-web.log"
+          npx --yes @deepseek-ai/dsh --profile web --port 33082 >"$log" 2>&1 &
+          pid=$!
+          cleanup() {
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+          }
+          trap 'cleanup' EXIT
+
+          ready=0
+          for _ in $(seq 1 360); do
+            if curl -fsS http://127.0.0.1:33082/ >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            if ! kill -0 "$pid" 2>/dev/null; then
+              cat "$log"
+              exit 1
+            fi
+            sleep 0.5
+          done
+          if [ "$ready" -ne 1 ]; then
+            cat "$log"
+            exit 1
+          fi
+
+          cleanup
+          trap - EXIT
