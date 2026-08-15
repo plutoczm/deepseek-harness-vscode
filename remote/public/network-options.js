@@ -9,7 +9,7 @@ let lastNetworkDiagnostics = null;
 let networkCheckRunning = false;
 
 const versionLabel = document.querySelector('.titlebar-brand span');
-if (versionLabel?.textContent.includes('0.8.0')) versionLabel.textContent = versionLabel.textContent.replace('0.8.0', '0.8.1');
+if (versionLabel) versionLabel.textContent = versionLabel.textContent.replace(/0\.8\.[01]/u, '0.9.0');
 
 function selectedNetworkMode() {
   return document.querySelector('input[name="network-mode"]:checked')?.value || 'auto';
@@ -33,6 +33,24 @@ function statusMarkup(ok, goodText, badText) {
   return `<span class="network-check-state ${ok ? 'good' : 'bad'}"><span class="network-check-dot"></span>${ok ? goodText : badText}</span>`;
 }
 
+function readinessLabel(readiness) {
+  const status = readiness?.status || 'not-checked';
+  const labels = {
+    'likely-ready': 'Likely ready ✓',
+    'auth-warning': '认证风险 ⚠',
+    'credential-warning': '凭据风险 ⚠',
+    'auth-error': '认证失败 ✕',
+    'credential-error': '凭据异常 ✕',
+    'network-error': '网络异常 ✕',
+    'remote-error': '远端异常 ✕',
+    'not-repository': '非 Git 仓库',
+    'no-origin': '未配置 origin',
+    'not-checked': '未检查',
+    'diagnostic-error': '诊断失败',
+  };
+  return labels[status] || status;
+}
+
 function renderNetworkDiagnostics(data) {
   lastNetworkDiagnostics = data;
   const direct = document.querySelector('#network-direct-status');
@@ -48,14 +66,28 @@ function renderNetworkDiagnostics(data) {
 
   const github = data?.github || {};
   const networkDiag = document.querySelector('#diag-github-network');
+  const dnsDiag = document.querySelector('#diag-github-dns');
   const authDiag = document.querySelector('#diag-github-auth');
   const credentialDiag = document.querySelector('#diag-git-credential');
   const proxyDiag = document.querySelector('#diag-local-proxy');
   const originDiag = document.querySelector('#diag-git-origin');
+  const gitDiag = document.querySelector('#diag-git-version');
+  const ghDiag = document.querySelector('#diag-gh-version');
+  const readDiag = document.querySelector('#diag-git-read');
+  const readinessDiag = document.querySelector('#diag-push-readiness');
+
   if (networkDiag) networkDiag.textContent = data?.direct?.ok ? `Direct ✓${data.direct.latencyMs ? ` · ${data.direct.latencyMs}ms` : ''}` : (data?.localProxy?.ok ? 'Direct ✕ · 7890 fallback ✓' : 'GitHub unavailable ✕');
   if (proxyDiag) proxyDiag.textContent = data?.localProxy?.ok ? '127.0.0.1:7890 ✓' : '127.0.0.1:7890 unavailable';
+  if (dnsDiag && !github.skipped) dnsDiag.textContent = github.dns?.ok ? `${github.dns.address || 'resolved'} ✓` : 'DNS resolve failed ✕';
+  if (gitDiag && !github.skipped) gitDiag.textContent = github.gitVersion || (github.gitAvailable ? 'git available' : 'git 未安装');
+  if (ghDiag && !github.skipped) ghDiag.textContent = github.ghVersion || (github.ghAvailable ? 'gh available' : 'gh 未安装');
   if (authDiag && !github.skipped) authDiag.textContent = github.authenticated ? `${github.login || 'github.com'} ✓` : (github.ghAvailable ? 'gh 未登录' : 'gh 未安装');
   if (originDiag && !github.skipped) originDiag.textContent = github.isRepository ? `${github.remoteProtocol || '?'} · ${github.origin || 'origin 未配置'}` : '当前工作区不是 Git 仓库';
+  if (readDiag && !github.skipped) readDiag.textContent = github.lsRemote?.ok ? 'git ls-remote ✓' : `失败 · ${github.lsRemote?.classification || 'unknown'}`;
+  if (readinessDiag && !github.skipped) {
+    readinessDiag.textContent = readinessLabel(github.pushReadiness);
+    readinessDiag.title = github.pushReadiness?.reason || '';
+  }
   if (credentialDiag && !github.skipped) {
     if (!github.isRepository) credentialDiag.textContent = '—';
     else if (github.brokenCredentialHelper) credentialDiag.textContent = '异常 helper ✕';
@@ -63,8 +95,55 @@ function renderNetworkDiagnostics(data) {
     else if (github.remoteProtocol === 'https') credentialDiag.textContent = 'HTTPS · 未检测到 gh helper';
     else credentialDiag.textContent = `${github.remoteProtocol || 'other'} · 不需要 HTTPS helper`;
   }
+
   const repair = document.querySelector('#repair-github-credential');
   if (repair && !github.skipped) repair.disabled = !github.ghAvailable || !github.authenticated || !github.isRepository || github.remoteProtocol !== 'https';
+  const copy = document.querySelector('#copy-network-report');
+  if (copy) copy.disabled = !lastNetworkDiagnostics;
+}
+
+function diagnosticReport(data = lastNetworkDiagnostics) {
+  const github = data?.github || {};
+  const lines = [
+    'DeepSeek Harness Desktop Network Doctor',
+    `Generated: ${new Date().toISOString()}`,
+    `SSH host: ${hostInput?.value?.trim() || '(none)'}`,
+    `Workspace: ${workspaceInput?.value?.trim() || '(none)'}`,
+    `Network policy: ${selectedNetworkMode()}`,
+    `Recommended route: ${data?.recommendation || 'unknown'}`,
+    `GitHub HTTPS direct: ${data?.direct?.ok ? `OK${data.direct.latencyMs ? ` (${data.direct.latencyMs} ms)` : ''}` : `FAIL (${data?.direct?.error || 'unknown'})`}`,
+    `Windows proxy 127.0.0.1:7890: ${data?.localProxy?.ok ? 'OK' : 'unavailable'}`,
+  ];
+  if (!github.skipped) {
+    lines.push(
+      `GitHub DNS: ${github.dns?.ok ? `OK (${github.dns.address || 'resolved'})` : 'FAIL'}`,
+      `Git: ${github.gitVersion || (github.gitAvailable ? 'available' : 'not installed')}`,
+      `GitHub CLI: ${github.ghVersion || (github.ghAvailable ? 'available' : 'not installed')}`,
+      `GitHub auth: ${github.authenticated ? `OK (${github.login || 'authenticated'})` : 'not authenticated'}`,
+      `Repository: ${github.isRepository ? 'yes' : 'no'}`,
+      `Origin: ${github.origin || '(none)'}`,
+      `Remote protocol: ${github.remoteProtocol || '(none)'}`,
+      `Credential helper: ${github.brokenCredentialHelper ? 'BROKEN' : (github.credentialHelpers?.some((item) => item.includes('gh auth git-credential')) ? 'gh helper detected' : 'no gh helper detected')}`,
+      `git ls-remote: ${github.lsRemote?.ok ? 'OK' : `FAIL (${github.lsRemote?.classification || 'unknown'})`}`,
+      `Push readiness: ${github.pushReadiness?.status || 'unknown'}`,
+      `Push readiness note: ${github.pushReadiness?.reason || 'n/a'}`,
+      'Write permission tested: no (diagnostics are read-only)',
+    );
+  }
+  return lines.join('\n');
+}
+
+async function copyDiagnosticReport() {
+  if (!lastNetworkDiagnostics) {
+    window.dshToast?.('暂无诊断报告', '请先运行 GitHub 网络检查。', 'info');
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(diagnosticReport());
+    window.dshToast?.('诊断报告已复制', '报告不包含 GitHub Token、SSH 私钥或 DeepSeek API Key。', 'success');
+  } catch (error) {
+    window.dshToast?.('复制失败', error.message, 'error');
+  }
 }
 
 async function checkNetwork({ quiet = false } = {}) {
@@ -93,7 +172,7 @@ async function checkNetwork({ quiet = false } = {}) {
         : data.recommendation === 'local-proxy'
           ? '服务器直连异常，Windows 7890 可作为备用线路。'
           : '服务器直连和 Windows 7890 都不可用。';
-      window.dshToast?.('GitHub 网络检查完成', route, data.recommendation === 'direct' ? 'success' : 'info');
+      window.dshToast?.('Network Doctor 完成', `${route}${data.github?.pushReadiness ? ` Push: ${readinessLabel(data.github.pushReadiness)}` : ''}`, data.recommendation === 'direct' ? 'success' : 'info');
     }
     return data;
   } catch (error) {
@@ -167,16 +246,22 @@ function installNetworkUi() {
   if (grid && !document.querySelector('#diag-github-network')) {
     grid.insertAdjacentHTML('beforeend', `
       <div class="diagnostic-item"><span>GitHub 网络</span><strong id="diag-github-network">未检查</strong></div>
+      <div class="diagnostic-item"><span>GitHub DNS</span><strong id="diag-github-dns">未检查</strong></div>
       <div class="diagnostic-item"><span>Windows 7890</span><strong id="diag-local-proxy">未检查</strong></div>
+      <div class="diagnostic-item"><span>Git</span><strong id="diag-git-version">未检查</strong></div>
+      <div class="diagnostic-item"><span>GitHub CLI</span><strong id="diag-gh-version">未检查</strong></div>
       <div class="diagnostic-item"><span>GitHub 认证</span><strong id="diag-github-auth">未检查</strong></div>
       <div class="diagnostic-item"><span>Git remote</span><strong id="diag-git-origin">未检查</strong></div>
       <div class="diagnostic-item"><span>Git credential</span><strong id="diag-git-credential">未检查</strong></div>
+      <div class="diagnostic-item"><span>Remote read</span><strong id="diag-git-read">未检查</strong></div>
+      <div class="diagnostic-item"><span>Push readiness</span><strong id="diag-push-readiness">未检查</strong></div>
     `);
     const actions = document.createElement('div');
     actions.className = 'github-diagnostic-actions';
-    actions.innerHTML = '<button id="github-diagnostics" class="button secondary" type="button">检查 GitHub</button><button id="repair-github-credential" class="button secondary" type="button" disabled>修复 GitHub 凭据</button><span>修复操作只在你点击按钮后执行。</span>';
+    actions.innerHTML = '<button id="github-diagnostics" class="button secondary" type="button">运行 Network Doctor</button><button id="copy-network-report" class="button secondary" type="button" disabled>复制诊断报告</button><button id="repair-github-credential" class="button secondary" type="button" disabled>修复 GitHub 凭据</button><span>诊断只读；修复操作只在你点击按钮并确认后执行。</span>';
     runtimeCard.appendChild(actions);
     document.querySelector('#github-diagnostics')?.addEventListener('click', () => checkNetwork());
+    document.querySelector('#copy-network-report')?.addEventListener('click', copyDiagnosticReport);
     document.querySelector('#repair-github-credential')?.addEventListener('click', repairCredential);
   }
 }
