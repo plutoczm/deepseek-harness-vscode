@@ -37,6 +37,12 @@ function shellQuote(value) {
   return `'${String(value).replaceAll("'", "'\"'\"'")}'`;
 }
 
+function optionalNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 export class HarnessManager extends EventEmitter {
   constructor(pluginDirectory) {
     super();
@@ -139,9 +145,9 @@ export class HarnessManager extends EventEmitter {
       ok: Boolean(snapshot?.ok),
       available: snapshot?.available ?? null,
       currency: snapshot?.currency || null,
-      total: Number.isFinite(Number(snapshot?.total)) ? Number(snapshot.total) : null,
-      granted: Number.isFinite(Number(snapshot?.granted)) ? Number(snapshot.granted) : null,
-      toppedUp: Number.isFinite(Number(snapshot?.toppedUp)) ? Number(snapshot.toppedUp) : null,
+      total: optionalNumber(snapshot?.total),
+      granted: optionalNumber(snapshot?.granted),
+      toppedUp: optionalNumber(snapshot?.toppedUp),
       error: snapshot?.error || null,
       fetchedAt: snapshot?.fetchedAt || null,
     };
