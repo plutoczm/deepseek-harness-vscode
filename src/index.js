@@ -7,6 +7,7 @@ import {
   openRemoteWorkspace,
 } from './remote-workspace.js';
 import { connectRemoteWorkspace } from './remote-session.js';
+import { installRemoteSessionCreateHook } from './remote-create-hook.js';
 
 export const name = 'dsh-openssh-vpn';
 export const inject = ['tools', 'webServer'];
@@ -145,6 +146,7 @@ export function apply(ctx, config = {}) {
   routes.start();
   const engine = new OpenSshEngine(routes);
   const disposeRuntime = installOpenSshRuntime({ engine, routes });
+  const disposeRemoteCreateHook = installRemoteSessionCreateHook(ctx);
   const disposers = allOpenSshTools(engine).map((tool) => ctx.tools.register(tool));
   const disposeWebApi = registerWebApi(ctx, routes, engine);
 
@@ -165,6 +167,7 @@ export function apply(ctx, config = {}) {
   return async () => {
     disposePrompt?.();
     disposeWebApi?.();
+    disposeRemoteCreateHook?.();
     for (const dispose of disposers.reverse()) dispose?.();
     disposeRuntime?.();
     await routes.stop();
