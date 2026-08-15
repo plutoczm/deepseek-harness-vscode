@@ -34,6 +34,8 @@ jobs:
           test -f src/tools.js
           test -f src/runtime.js
           test -f src/remote-workspace.js
+          test -f src/remote-session.js
+          test -f src/remote-create-hook.js
           test -f src/remote-tools.js
           ! grep -R "sshRemote" src package.json cordis.patch.yml client.js
           ! grep -R "dsh-ssh-remote" src package.json cordis.patch.yml client.js
@@ -118,4 +120,6 @@ jobs:
           tar -tf $package | Select-String 'package/client.js' | Out-Null
           tar -tf $package | Select-String 'package/src/remote-tools.js' | Out-Null
           tar -tf $package | Select-String 'package/src/remote-workspace.js' | Out-Null
+          tar -tf $package | Select-String 'package/src/remote-session.js' | Out-Null
+          tar -tf $package | Select-String 'package/src/remote-create-hook.js' | Out-Null
           Write-Host "Packed: $package"
