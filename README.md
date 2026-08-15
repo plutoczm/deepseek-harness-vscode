@@ -1,104 +1,120 @@
-# dsh-ssh-vpn-bridge
+# dsh-openssh-vpn
 
-A focused DeepSeek Harness plugin for two problems only:
+A focused DeepSeek Harness plugin for **native OpenSSH remote operations** and **Windows VPN/proxy reuse**.
 
-1. **SSH remote workspaces that reuse the OpenSSH configuration you already know works.**
-2. **Windows VPN / local proxy bridging to the remote host**, so remote Git, curl and wget can fall back to `127.0.0.1:7890` when the server cannot reach GitHub reliably.
+The invariant is simple:
 
-It deliberately does not try to be a desktop IDE, plugin marketplace, MCP manager, Git GUI, or model wrapper.
+> If `ssh <alias>` works for the Windows account running Harness, the plugin uses that same `ssh.exe`, the same `~/.ssh/config`, the same key selection, ProxyJump/ProxyCommand rules, known_hosts and RemoteForward configuration.
 
-## Core rule: one SSH identity path
+There is no second Node `ssh2` credential stack and no `sshRemote` provider dependency.
 
-If this works in Windows Terminal:
+## What it provides
 
-```powershell
-ssh gdwyy70
-```
+Harness agent tools:
 
-Harness should use the same OpenSSH identity/configuration path instead of asking you to re-enter host, username, private key or ProxyJump in a second SSH stack.
+- `openssh_list` — concrete aliases discovered from `%USERPROFILE%\.ssh\config`, resolved with the real `ssh -G`.
+- `openssh_exec` — remote command execution through system OpenSSH.
+- `openssh_proxy_status` — direct/proxy route diagnostics and refresh.
+- `openssh_upload` / `openssh_download` — file transfer through system `scp`.
 
-The bundled `dsh-ssh-remote` dependency supplies the mature Harness UI, SSH alias discovery, workspace anchors and routing model. This bridge replaces its actual remote transport with the **system `ssh` executable** for directory browsing, file reads/writes, explicit remote commands and persistent terminal shells. That avoids the common Windows failure where OpenSSH can authenticate through the Windows agent or an encrypted key but a separate Node `ssh2` client cannot.
+The package is a normal `dsh.bundle` and boots as a standalone Web-profile plugin.
 
-Remote file metadata/list/read/write operations are executed through system OpenSSH and a small Python helper on the remote host. No remote source tree is copied locally.
+## Why system OpenSSH
 
-## Important: use one SSH workspace provider
+Windows OpenSSH already handles the difficult compatibility surface correctly:
 
-Do **not** keep another SSH workspace/runtime plugin active at the same time as this bundle. Multiple SSH providers can compete for Harness filesystem, subprocess, terminal, and workspace routing seams and produce failures that look like an SSH authentication/network problem.
+- default IdentityFile selection;
+- encrypted/private key handling supported by the user's actual setup;
+- Include / Match;
+- ProxyJump / ProxyCommand;
+- known_hosts;
+- RemoteForward;
+- Windows-specific OpenSSH behavior.
 
-Before testing this plugin, disable or uninstall competing SSH plugins such as `@captain1275/dsh-ssh`. Unrelated plugins (balance, appearance, vision routing, workshop, etc.) can stay installed.
+The plugin asks OpenSSH for the effective configuration using `ssh -G <alias>` instead of re-parsing those semantics itself.
 
-## Network model
+## VS Code RemoteForward reuse
+
+A common setup is:
 
 ```text
-DeepSeek Harness on Windows
-       |
-       +---- system OpenSSH / ~/.ssh/config ----> remote Linux host
-       |                |
-       |                +---- browse/read/write/terminal/Bash
-       |
-       +---- Windows 127.0.0.1:7890 (Clash/Mihomo/etc.)
-                         |
-                         +-- ssh -R 127.0.0.1:17890:127.0.0.1:7890
-                                          |
-                                          v
-                                  remote Git/curl/wget
-                                          |
-                                        GitHub
+remote 127.0.0.1:35052
+        |
+        | SSH RemoteForward owned by VS Code
+        v
+Windows 127.0.0.1:7890
+        |
+        v
+       VPN
 ```
 
-Default mode is **auto**:
+For example, `ssh -G gdwyy70` may contain:
 
-- Probe GitHub directly from the SSH host.
-- If direct access works, keep the server network untouched.
-- If direct access fails and Windows `127.0.0.1:7890` accepts HTTP CONNECT, open an SSH reverse tunnel.
-- Inject `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` only into remote workspace processes/terminals.
-- `NO_PROXY` includes `api.deepseek.com` / `.deepseek.com` by default.
+```text
+remoteforward 35052 [127.0.0.1]:7890
+```
 
-Because Harness and the model run locally in this architecture, DeepSeek model calls are not routed through the remote proxy bridge.
+The plugin's proxy policy is:
 
-## Prerequisites
+1. In `auto` mode, probe GitHub directly from the remote host.
+2. If direct access works, use the server network.
+3. If direct access fails, probe the Windows HTTP/mixed proxy at `127.0.0.1:7890`.
+4. If `ssh -G` exposes a matching RemoteForward, probe its remote listen port first.
+5. If that port is already live (for example VS Code owns `35052`), **reuse it and do not create or kill any tunnel**.
+6. If the configured RemoteForward exists but is not live, start a dedicated OpenSSH `-N` process so the configured forward becomes live.
+7. If no matching RemoteForward exists, create a fallback reverse forward on `127.0.0.1:17890+`.
 
-- DeepSeek Harness / `dsh` with Node 22+.
-- Windows OpenSSH client on PATH.
-- A non-interactive SSH alias that already works from the same Windows account running Harness:
+All ordinary command/probe SSH calls include:
 
-```powershell
+```text
+-o ClearAllForwardings=yes
+```
+
+so a short-lived Harness command never tries to bind the same configured RemoteForward again and never fights VS Code for `35052`.
+
+## Proxy environment
+
+When proxy routing is active, `openssh_exec` prefixes the remote command with:
+
+```text
+HTTP_PROXY=http://127.0.0.1:<remote-port>
+HTTPS_PROXY=http://127.0.0.1:<remote-port>
+ALL_PROXY=http://127.0.0.1:<remote-port>
+```
+
+Upper- and lower-case forms are both exported. Default `NO_PROXY` includes DeepSeek domains and loopback addresses.
+
+## Requirements
+
+- Node 22+ / current DeepSeek Harness.
+- Windows OpenSSH `ssh.exe` and `scp.exe` on PATH.
+- A working OpenSSH alias, e.g.:
+
+```cmd
 ssh gdwyy70
 ```
 
-- `python3` or `python` on the remote Linux host for remote file metadata/list/read/write helpers.
-- For VPN fallback, an HTTP or mixed proxy listening on Windows `127.0.0.1:7890`. Clash/Mihomo mixed ports normally work. A SOCKS-only port does not.
+- For VPN fallback, an HTTP or mixed proxy on Windows `127.0.0.1:7890`.
 
-## Install from GitHub
+No remote Python helper is required in v0.2.0.
 
-After this branch is merged to main:
+## Install development build
 
-```sh
-dsh plugin --profile web add 'github:plutoczm/deepseek-harness-vscode'
+Use an exact commit during acceptance testing:
+
+```cmd
+npx @deepseek-ai/dsh plugin --profile web add "github:plutoczm/deepseek-harness-vscode#<commit-sha>"
 ```
 
-For testing the development branch, prefer an exact commit SHA so the test is reproducible:
+Then:
 
-```sh
-dsh plugin --profile web add 'github:plutoczm/deepseek-harness-vscode#<commit-sha>'
+```cmd
+npx @deepseek-ai/dsh web
 ```
 
-Restart the Web profile after installation.
+Because the tools are named `openssh_*`, this development build can coexist with `@captain1275/dsh-ssh` while testing. The final single-provider cleanup can remove the older plugin after native OpenSSH acceptance.
 
-## Use
-
-1. Keep SSH configuration in your Windows OpenSSH config (`%USERPROFILE%\.ssh\config`).
-2. Open Harness Web.
-3. Use the SSH Remote workspace UI supplied by the bundled SSH provider.
-4. Pick an SSH alias such as `gdwyy70`.
-5. Browse and open `/mnt/ext-disk/czm2025/Projects/face_privacy_tkde` (or any other remote directory).
-6. Use **Full access** for the session so Harness may launch the local `ssh.exe` process.
-7. Bash/file/terminal activity for that workspace is routed to the SSH host.
-8. Network mode is automatically direct-first, then Windows `7890` fallback.
-
-No SSH private key or password is copied into this plugin's settings.
-
-## Optional environment configuration
+## Environment options
 
 ```text
 DSH_SSH_PROXY_MODE=auto          # auto | direct | proxy
@@ -107,57 +123,36 @@ DSH_SSH_PROXY_PORT=7890
 DSH_SSH_PROXY_REMOTE_PORT=17890
 DSH_SSH_PROXY_HEALTH_INTERVAL_MS=60000
 DSH_SSH_PROXY_NO_PROXY=api.deepseek.com,.deepseek.com,127.0.0.1,localhost,::1
+DSH_SSH_ALIASES=gdwyy70,gpu02    # optional aliases not discoverable from the main config file
 ```
 
-`auto` is recommended. `proxy` forces the tunnel. `direct` disables VPN fallback.
+`auto` is recommended.
 
-## Acceptance tests
+## Real acceptance target
 
-Inside a remote workspace, these should all describe the remote machine/repository:
+For the current reference machine:
 
-```sh
-pwd
-hostname
-git remote -v
-git ls-remote origin
-git push --dry-run
+```text
+alias: gdwyy70
+resolved target: czm2025@172.23.207.70:22
+authenticated key: C:\Users\Admin1\.ssh\id_rsa
+configured RemoteForward: remote 35052 -> Windows 127.0.0.1:7890
+remote project: /mnt/ext-disk/czm2025/Projects/face_privacy_tkde
 ```
 
-To explicitly test the Windows VPN bridge, launch Harness once with:
+The already-observed external tunnel successfully returned GitHub HTTP 200 and `git ls-remote origin HEAD` through `127.0.0.1:35052`.
 
-```powershell
-$env:DSH_SSH_PROXY_MODE='proxy'
-dsh web
-```
+See `WINDOWS-TEST.md` for the next packaged-plugin acceptance run.
 
-Then in the remote Harness terminal/Bash:
+## Security boundary
 
-```sh
-env | grep -i proxy
-curl -I https://github.com --connect-timeout 10
-```
-
-The remote proxy variables should point to a loopback port such as `http://127.0.0.1:17890`, which is reverse-forwarded to Windows `127.0.0.1:7890`. After testing, restart Harness without the forced environment variable to return to `auto` mode.
-
-## Security / trust boundary
-
-- SSH keys and agent state stay with system OpenSSH / your existing Windows SSH configuration.
-- The reverse-forward listener binds to remote **127.0.0.1**, not all interfaces.
+- Private keys are not copied into plugin settings or a second JSON credential store.
+- Authentication is delegated to the installed system OpenSSH client.
+- Existing external tunnels are never killed by the plugin.
+- Harness-managed reverse listeners bind to remote loopback.
 - The plugin never reads or exports the DeepSeek API key.
-- Remote proxy environment is scoped to routed remote processes and remote terminal shells.
-- File payloads travel over the existing encrypted SSH connection.
-- No sudo/root access is required.
-
-## Upstream basis
-
-The remote workspace dependency is pinned to `CrazyShout/dsh-ssh-remote` commit `72a2ac6b0f277ab0706ee93634dee2c639070728` for reproducibility. It is MIT-licensed. We retain its Harness UI/workspace model while deliberately making system OpenSSH authoritative for actual remote authentication/data transport.
-
-See `NOTICE` for attribution.
-
-## Plugin-market plan
-
-After the Windows + real-SSH test is stable, this repository can be submitted to `awesome-dsh-plugin`. That registry requires a real `dsh.bundle` manifest and is consumed by the community `dsh-market`, so there is no need to build another marketplace into this project.
+- No weakening of pnpm `blockExoticSubdeps` / supply-chain policy is required.
 
 ## Status
 
-This is the first focused implementation branch. CI covers Node 22/24, Windows OpenSSH presence, unit tests, package creation, and an official Harness packaged-plugin Web smoke test. A real Windows `ssh gdwyy70` + local mixed proxy `127.0.0.1:7890` test is still required before release/merge.
+`0.2.0` is the standalone OpenSSH core. CI covers Node 22/24, pure route-policy tests, Windows OpenSSH presence, package creation, and clean-profile official Harness boot without any secondary SSH provider.
