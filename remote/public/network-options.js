@@ -36,6 +36,7 @@ function statusMarkup(ok, goodText, badText) {
 function readinessLabel(readiness) {
   const status = readiness?.status || 'not-checked';
   const labels = {
+    ready: 'Ready ✓',
     'likely-ready': 'Likely ready ✓',
     'auth-warning': '认证风险 ⚠',
     'credential-warning': '凭据风险 ⚠',
@@ -43,6 +44,7 @@ function readinessLabel(readiness) {
     'credential-error': '凭据异常 ✕',
     'network-error': '网络异常 ✕',
     'remote-error': '远端异常 ✕',
+    'no-write-permission': '无 Push 权限 ✕',
     'not-repository': '非 Git 仓库',
     'no-origin': '未配置 origin',
     'not-checked': '未检查',
@@ -74,6 +76,7 @@ function renderNetworkDiagnostics(data) {
   const gitDiag = document.querySelector('#diag-git-version');
   const ghDiag = document.querySelector('#diag-gh-version');
   const readDiag = document.querySelector('#diag-git-read');
+  const pushPermissionDiag = document.querySelector('#diag-github-push-permission');
   const readinessDiag = document.querySelector('#diag-push-readiness');
 
   if (networkDiag) networkDiag.textContent = data?.direct?.ok ? `Direct ✓${data.direct.latencyMs ? ` · ${data.direct.latencyMs}ms` : ''}` : (data?.localProxy?.ok ? 'Direct ✕ · 7890 fallback ✓' : 'GitHub unavailable ✕');
@@ -84,6 +87,11 @@ function renderNetworkDiagnostics(data) {
   if (authDiag && !github.skipped) authDiag.textContent = github.authenticated ? `${github.login || 'github.com'} ✓` : (github.ghAvailable ? 'gh 未登录' : 'gh 未安装');
   if (originDiag && !github.skipped) originDiag.textContent = github.isRepository ? `${github.remoteProtocol || '?'} · ${github.origin || 'origin 未配置'}` : '当前工作区不是 Git 仓库';
   if (readDiag && !github.skipped) readDiag.textContent = github.lsRemote?.ok ? 'git ls-remote ✓' : `失败 · ${github.lsRemote?.classification || 'unknown'}`;
+  if (pushPermissionDiag && !github.skipped) {
+    pushPermissionDiag.textContent = github.pushPermission?.checked
+      ? (github.pushPermission.allowed ? 'GitHub API · 允许 ✓' : 'GitHub API · 无权限 ✕')
+      : '未确认';
+  }
   if (readinessDiag && !github.skipped) {
     readinessDiag.textContent = readinessLabel(github.pushReadiness);
     readinessDiag.title = github.pushReadiness?.reason || '';
@@ -123,11 +131,13 @@ function diagnosticReport(data = lastNetworkDiagnostics) {
       `Repository: ${github.isRepository ? 'yes' : 'no'}`,
       `Origin: ${github.origin || '(none)'}`,
       `Remote protocol: ${github.remoteProtocol || '(none)'}`,
+      `GitHub repository slug: ${github.repositorySlug || '(unknown)'}`,
       `Credential helper: ${github.brokenCredentialHelper ? 'BROKEN' : (github.credentialHelpers?.some((item) => item.includes('gh auth git-credential')) ? 'gh helper detected' : 'no gh helper detected')}`,
       `git ls-remote: ${github.lsRemote?.ok ? 'OK' : `FAIL (${github.lsRemote?.classification || 'unknown'})`}`,
+      `GitHub API push permission: ${github.pushPermission?.checked ? (github.pushPermission.allowed ? 'ALLOWED' : 'DENIED') : 'not confirmed'}`,
       `Push readiness: ${github.pushReadiness?.status || 'unknown'}`,
       `Push readiness note: ${github.pushReadiness?.reason || 'n/a'}`,
-      'Write permission tested: no (diagnostics are read-only)',
+      'Write operation performed: no (Network Doctor remains read-only)',
     );
   }
   return lines.join('\n');
@@ -254,6 +264,7 @@ function installNetworkUi() {
       <div class="diagnostic-item"><span>Git remote</span><strong id="diag-git-origin">未检查</strong></div>
       <div class="diagnostic-item"><span>Git credential</span><strong id="diag-git-credential">未检查</strong></div>
       <div class="diagnostic-item"><span>Remote read</span><strong id="diag-git-read">未检查</strong></div>
+      <div class="diagnostic-item"><span>GitHub Push 权限</span><strong id="diag-github-push-permission">未检查</strong></div>
       <div class="diagnostic-item"><span>Push readiness</span><strong id="diag-push-readiness">未检查</strong></div>
     `);
     const actions = document.createElement('div');
