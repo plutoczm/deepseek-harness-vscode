@@ -28,7 +28,7 @@
     "dsh-ssh-remote": "github:CrazyShout/dsh-ssh-remote#72a2ac6b0f277ab0706ee93634dee2c639070728"
   },
   "scripts": {
-    "check": "node --check src/util.js && node --check src/network.js && node --check src/process.js && node --check src/terminal.js && node --check src/index.js",
+    "check": "node --check src/util.js && node --check src/network.js && node --check src/openssh-transport.js && node --check src/process.js && node --check src/terminal.js && node --check src/index.js",
     "test": "node --test test/*.test.mjs"
   },
   "keywords": [
