@@ -18,22 +18,10 @@ export function normalizeConfig(input = {}) {
     healthIntervalMs: clampInteger(input.healthIntervalMs ?? process.env.DSH_SSH_PROXY_HEALTH_INTERVAL_MS, 60_000, 15_000, 600_000),
     probeTimeoutMs: clampInteger(input.probeTimeoutMs, 8_000, 2_000, 20_000),
     noProxy: String(input.noProxy ?? process.env.DSH_SSH_PROXY_NO_PROXY ?? 'api.deepseek.com,.deepseek.com,127.0.0.1,localhost,::1'),
-  };
-}
-
-export function parseSshUri(uri) {
-  const url = new URL(uri);
-  if (url.protocol !== 'ssh:') throw new Error(`Expected ssh:// URI, got ${uri}`);
-  const host = url.hostname;
-  const username = decodeURIComponent(url.username || '');
-  const port = Number(url.port || 22);
-  const path = decodeURIComponent(url.pathname || '/') || '/';
-  return {
-    host,
-    username,
-    port,
-    path,
-    destination: username ? `${username}@${host}` : host,
+    extraAliases: String(input.extraAliases ?? process.env.DSH_SSH_ALIASES ?? '')
+      .split(/[\s,]+/u)
+      .map((value) => value.trim())
+      .filter(Boolean),
   };
 }
 
@@ -63,8 +51,104 @@ export function prefixShellEnvironment(command, environment) {
   return `${exports.join('; ')}; ${command}`;
 }
 
-export function remoteUriForCwd(service, cwd) {
-  if (!cwd || typeof cwd !== 'string') return undefined;
-  if (cwd.startsWith('ssh://')) return cwd;
-  return service.resolveRemotePath(cwd);
+function stripBrackets(value) {
+  const text = String(value || '').trim();
+  return text.startsWith('[') && text.endsWith(']') ? text.slice(1, -1) : text;
+}
+
+/** Parse OpenSSH's host:port forms, including [IPv6]:port and bare ports. */
+export function parseForwardEndpoint(value, defaultHost = '127.0.0.1') {
+  const text = String(value || '').trim();
+  if (/^\d+$/u.test(text)) return { host: defaultHost, port: Number(text) };
+
+  if (text.startsWith('[')) {
+    const close = text.lastIndexOf(']:');
+    if (close > 0) {
+      return {
+        host: text.slice(1, close),
+        port: Number(text.slice(close + 2)),
+      };
+    }
+  }
+
+  const colon = text.lastIndexOf(':');
+  if (colon <= 0) return { host: defaultHost, port: Number.NaN };
+  return {
+    host: stripBrackets(text.slice(0, colon)),
+    port: Number(text.slice(colon + 1)),
+  };
+}
+
+/** Parse one `ssh -G <alias>` output without re-implementing OpenSSH config rules. */
+export function parseOpenSshConfig(output, alias = '') {
+  const result = {
+    alias: String(alias),
+    hostname: String(alias),
+    user: '',
+    port: 22,
+    identityFiles: [],
+    proxyJump: undefined,
+    proxyCommand: undefined,
+    remoteForwards: [],
+  };
+
+  for (const raw of String(output || '').split(/\r?\n/u)) {
+    const line = raw.trim();
+    if (!line) continue;
+    const space = line.search(/\s/u);
+    if (space < 0) continue;
+    const key = line.slice(0, space).toLowerCase();
+    const value = line.slice(space).trim();
+
+    if (key === 'hostname') result.hostname = value;
+    else if (key === 'user') result.user = value;
+    else if (key === 'port') result.port = Number(value) || 22;
+    else if (key === 'identityfile') result.identityFiles.push(value);
+    else if (key === 'proxyjump' && value.toLowerCase() !== 'none') result.proxyJump = value;
+    else if (key === 'proxycommand' && value.toLowerCase() !== 'none') result.proxyCommand = value;
+    else if (key === 'remoteforward') {
+      const parts = value.split(/\s+/u);
+      if (parts.length < 2) continue;
+      const listen = parseForwardEndpoint(parts[0], '127.0.0.1');
+      const target = parseForwardEndpoint(parts[1], '127.0.0.1');
+      if (!Number.isInteger(listen.port) || !Number.isInteger(target.port)) continue;
+      result.remoteForwards.push({
+        listenHost: listen.host,
+        listenPort: listen.port,
+        targetHost: target.host,
+        targetPort: target.port,
+        raw: value,
+      });
+    }
+  }
+
+  return result;
+}
+
+function normalizeLoopback(host) {
+  const value = stripBrackets(host).toLowerCase();
+  if (value === 'localhost' || value === '::1' || value === '0:0:0:0:0:0:0:1') return '127.0.0.1';
+  return value;
+}
+
+/** Find a configured RemoteForward whose local target is the Windows VPN proxy. */
+export function matchingProxyForward(openSshConfig, config) {
+  const wantedHost = normalizeLoopback(config.localProxyHost);
+  return (openSshConfig?.remoteForwards || []).find((forward) =>
+    normalizeLoopback(forward.targetHost) === wantedHost
+    && Number(forward.targetPort) === Number(config.localProxyPort));
+}
+
+/** Concrete aliases from ordinary Host lines. Wildcards are intentionally excluded. */
+export function parseConcreteHostAliases(text) {
+  const aliases = new Set();
+  for (const raw of String(text || '').split(/\r?\n/u)) {
+    const match = /^\s*Host\s+(.+)$/iu.exec(raw);
+    if (!match) continue;
+    for (const token of match[1].trim().split(/\s+/u)) {
+      if (!token || token.startsWith('!') || /[*?]/u.test(token)) continue;
+      aliases.add(token);
+    }
+  }
+  return [...aliases];
 }
