@@ -28,48 +28,57 @@ jobs:
           test -f cordis.patch.yml
           test -f src/index.js
       - name: Smoke-test packaged plugin with official Harness
-        if: matrix.node == 22
-        timeout-minutes: 10
+        timeout-minutes: 12
         shell: bash
         run: |
           set -euo pipefail
           npm install -g pnpm@10
-          export DSH_HOME="$RUNNER_TEMP/dsh-ssh-vpn-smoke"
           package_file="$(npm pack --silent | tail -n 1)"
+          package_path="$PWD/$package_file"
 
-          # Keep the SSH provider a visible top-level plugin. This satisfies
-          # pnpm blockExoticSubdeps instead of weakening the supply-chain policy.
-          npx --yes @deepseek-ai/dsh plugin --profile web add 'github:CrazyShout/dsh-ssh-remote#72a2ac6b0f277ab0706ee93634dee2c639070728'
-          npx --yes @deepseek-ai/dsh plugin --profile web add "$PWD/$package_file"
-
-          log="$RUNNER_TEMP/dsh-ssh-vpn-web.log"
-          npx --yes @deepseek-ai/dsh --profile web --port 33082 >"$log" 2>&1 &
-          pid=$!
-          cleanup() {
+          boot_check() {
+            local home="$1"
+            local port="$2"
+            local log="$3"
+            export DSH_HOME="$home"
+            npx --yes @deepseek-ai/dsh --profile web --port "$port" >"$log" 2>&1 &
+            local pid=$!
+            local ready=0
+            for _ in $(seq 1 360); do
+              if curl -fsS "http://127.0.0.1:$port/" >/dev/null 2>&1; then
+                ready=1
+                break
+              fi
+              if ! kill -0 "$pid" 2>/dev/null; then
+                cat "$log"
+                wait "$pid" || true
+                return 1
+              fi
+              sleep 0.5
+            done
+            if [ "$ready" -ne 1 ]; then
+              cat "$log"
+              kill "$pid" 2>/dev/null || true
+              wait "$pid" 2>/dev/null || true
+              return 1
+            fi
             kill "$pid" 2>/dev/null || true
             wait "$pid" 2>/dev/null || true
           }
-          trap 'cleanup' EXIT
 
-          ready=0
-          for _ in $(seq 1 360); do
-            if curl -fsS http://127.0.0.1:33082/ >/dev/null 2>&1; then
-              ready=1
-              break
-            fi
-            if ! kill -0 "$pid" 2>/dev/null; then
-              cat "$log"
-              exit 1
-            fi
-            sleep 0.5
-          done
-          if [ "$ready" -ne 1 ]; then
-            cat "$log"
-            exit 1
-          fi
+          # The bridge must never make Harness unbootable just because the SSH
+          # provider is absent or disabled. Its sshRemote scope should wait
+          # dynamically instead of leaving the loader entry pending.
+          export DSH_HOME="$RUNNER_TEMP/dsh-bridge-only-${{ matrix.node }}"
+          npx --yes @deepseek-ai/dsh plugin --profile web add "$package_path"
+          boot_check "$DSH_HOME" 33081 "$RUNNER_TEMP/dsh-bridge-only-${{ matrix.node }}.log"
 
-          cleanup
-          trap - EXIT
+          # Full composition: keep the SSH provider a visible top-level plugin
+          # to satisfy pnpm blockExoticSubdeps, then add the bridge.
+          export DSH_HOME="$RUNNER_TEMP/dsh-ssh-vpn-smoke-${{ matrix.node }}"
+          npx --yes @deepseek-ai/dsh plugin --profile web add 'github:CrazyShout/dsh-ssh-remote#72a2ac6b0f277ab0706ee93634dee2c639070728'
+          npx --yes @deepseek-ai/dsh plugin --profile web add "$package_path"
+          boot_check "$DSH_HOME" 33082 "$RUNNER_TEMP/dsh-ssh-vpn-${{ matrix.node }}.log"
 
   windows:
     runs-on: windows-latest
@@ -77,7 +86,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
       - name: Verify Windows OpenSSH client
         shell: pwsh
         run: |
