@@ -1,0 +1,8 @@
+# One bundle: remote SSH workspace + Windows local proxy bridge.
+# dsh-ssh-remote owns SSH workspace/filesystem routing. This package layers
+# direct-first network fallback and proxy-aware remote terminals on top.
+- insert:
+    - id: dsh-ssh-vpn-remote
+      name: dsh-ssh-remote
+    - id: dsh-ssh-vpn-bridge
+      name: dsh-ssh-vpn-bridge

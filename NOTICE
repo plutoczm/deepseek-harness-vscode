@@ -1,0 +1,7 @@
+dsh-ssh-vpn-bridge uses dsh-ssh-remote as a pinned runtime dependency and adapts the shape of its remote terminal session/backend API.
+
+Upstream project: https://github.com/CrazyShout/dsh-ssh-remote
+License: MIT
+Copyright belongs to the respective upstream authors/contributors.
+
+This repository's own additions include automatic direct-first GitHub reachability probing, Windows HTTP/mixed-proxy detection, SSH reverse-tunnel lifecycle management, remote proxy environment injection, and integration glue.

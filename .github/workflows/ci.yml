@@ -1,102 +1,29 @@
-name: CI
+name: Plugin CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'feature/**']
   pull_request:
-    branches: [main]
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [22, 24]
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '22'
-
+          node-version: ${{ matrix.node }}
       - name: Install dependencies
-        run: npm install
-
-      - name: Compile extension
-        run: npm run compile
-
-      - name: Check Harness plugin syntax
+        run: npm install --ignore-scripts
+      - name: Syntax check
+        run: npm run check
+      - name: Unit tests
+        run: npm test
+      - name: Verify bundle payload
         run: |
-          node --check harness-plugin/index.js
-          bash -n harness-plugin/bash-env.sh
-
-      - name: Test per-session Bash bootstrap
-        shell: bash
-        run: |
-          set -euo pipefail
-          tmp="$(mktemp -d)"
-          trap 'rm -rf "$tmp"' EXIT
-          mkdir -p "$tmp/session-env"
-          printf 'export DSH_VSCODE_ENV_TEST=selected\n' > "$tmp/session-env/session_1.sh"
-          printf 'export DSH_VSCODE_PARENT_TEST=parent\n' > "$tmp/parent-bash-env.sh"
-          DSH_SESSION_ID='session/1' \
-          DEEPSEEK_HARNESS_SESSION_ENV_DIR="$tmp/session-env" \
-          DEEPSEEK_HARNESS_PARENT_BASH_ENV="$tmp/parent-bash-env.sh" \
-          BASH_ENV="$PWD/harness-plugin/bash-env.sh" \
-          bash -c 'test "$DSH_VSCODE_ENV_TEST" = selected && test "$DSH_VSCODE_PARENT_TEST" = parent'
-
-      - name: Smoke-test official Harness plugin boot
-        timeout-minutes: 4
-        shell: bash
-        run: |
-          set -euo pipefail
-          export DSH_HOME="$RUNNER_TEMP/dsh-vscode-smoke"
-          export DEEPSEEK_HARNESS_SESSION_ENV_DIR="$RUNNER_TEMP/dsh-vscode-session-env"
-          export DEEPSEEK_HARNESS_BASE_PATH="$PATH"
-          export BASH_ENV="$PWD/harness-plugin/bash-env.sh"
-          plugin_dir="$DSH_HOME/profiles/node_modules/deepseek-harness-vscode-session-env"
-          mkdir -p "$plugin_dir" "$DEEPSEEK_HARNESS_SESSION_ENV_DIR"
-          cp harness-plugin/package.json harness-plugin/index.js "$plugin_dir/"
-          log="$RUNNER_TEMP/deepseek-harness-web.log"
-          npx --yes @deepseek-ai/dsh --profile web --patch "$PWD/harness-plugin/cordis.patch.yml" --port 33080 >"$log" 2>&1 &
-          pid=$!
-          cleanup() {
-            kill "$pid" 2>/dev/null || true
-            wait "$pid" 2>/dev/null || true
-          }
-          trap 'cleanup' EXIT
-          ready=0
-          for _ in $(seq 1 360); do
-            if curl -fsS http://127.0.0.1:33080/ >/dev/null 2>&1; then
-              ready=1
-              break
-            fi
-            if ! kill -0 "$pid" 2>/dev/null; then
-              cat "$log"
-              exit 1
-            fi
-            sleep 0.5
-          done
-          if [ "$ready" -ne 1 ]; then
-            cat "$log"
-            exit 1
-          fi
-          cleanup
-          trap - EXIT
-
-      - name: Package VSIX
-        run: npm run package
-
-      - name: Verify VSIX contents
-        run: |
-          unzip -l deepseek-harness-vscode.vsix | grep -F 'extension/dist/extension.js'
-          unzip -l deepseek-harness-vscode.vsix | grep -F 'extension/harness-plugin/index.js'
-          unzip -l deepseek-harness-vscode.vsix | grep -F 'extension/harness-plugin/bash-env.sh'
-          unzip -l deepseek-harness-vscode.vsix | grep -F 'extension/harness-plugin/cordis.patch.yml'
-
-      - name: Upload VSIX artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: deepseek-harness-vscode-vsix
-          path: deepseek-harness-vscode.vsix
-          if-no-files-found: error
-          retention-days: 30
+          node -e "const p=require('./package.json'); if(!p.dsh?.bundle?.patch) process.exit(1)"
+          test -f cordis.patch.yml
+          test -f src/index.js
