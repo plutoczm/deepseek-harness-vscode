@@ -1,5 +1,16 @@
 import { prefixShellEnvironment, remoteUriForCwd } from './util.js';
 
+function publishWorkspaceStatus(service, workspace, status, reason) {
+  if (!workspace) return;
+  workspace.status = status;
+  if (reason) workspace.lastError = reason;
+  else workspace.lastError = undefined;
+  // These are ordinary prototype methods in the upstream compiled package;
+  // call them when present so its existing UI/status listeners stay accurate.
+  service.emit?.({ workspaceId: workspace.id, status, reason });
+  service.save?.();
+}
+
 export function installProcessProxy(ctx, routes) {
   const service = ctx.sshRemote;
   const subprocess = ctx.subprocess;
@@ -22,13 +33,27 @@ export function installProcessProxy(ctx, routes) {
   };
 
   const originalConnect = service.connect;
+  const originalDisconnect = service.disconnect;
   const originalMaterializeWorkspace = service.materializeWorkspace;
   const originalExec = service.exec;
 
   service.connect = async function (id) {
-    await originalConnect.call(service, id);
     const workspace = service.get(id);
-    if (workspace?.uri) await routes.ensure(workspace.uri, { force: true });
+    if (workspace) publishWorkspaceStatus(service, workspace, 'connecting');
+    try {
+      await originalConnect.call(service, id);
+      if (workspace) publishWorkspaceStatus(service, workspace, 'connected');
+      if (workspace?.uri) await routes.ensure(workspace.uri, { force: true });
+    } catch (error) {
+      if (workspace) publishWorkspaceStatus(service, workspace, 'error', error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  };
+
+  service.disconnect = async function (id) {
+    const workspace = service.get(id);
+    await originalDisconnect.call(service, id);
+    if (workspace) publishWorkspaceStatus(service, workspace, 'disconnected', 'closed');
   };
 
   service.materializeWorkspace = async function (...args) {
@@ -49,6 +74,7 @@ export function installProcessProxy(ctx, routes) {
     subprocess.spawn = originalSpawn;
     subprocess.spawnTerminal = originalSpawnTerminal;
     service.connect = originalConnect;
+    service.disconnect = originalDisconnect;
     service.materializeWorkspace = originalMaterializeWorkspace;
     service.exec = originalExec;
   };
