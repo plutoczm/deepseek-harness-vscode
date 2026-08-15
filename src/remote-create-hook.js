@@ -18,9 +18,30 @@ export function installRemoteSessionCreateHook(ctx) {
   const apiProxy = ctx.get?.('apiProxy');
   const registry = ctx.get?.('workspaceRegistry');
   const sessions = apiProxy?.sessions;
+
+  // The bundle may be inserted before apiProxy/workspaceRegistry in a user's
+  // patch order. Cordis ctx.inject is the supported way to wait for optional
+  // services, so do not silently skip the hook based on startup timing.
   if (!sessions || typeof sessions.create !== 'function' || !registry?.list) {
-    return () => {};
+    if (typeof ctx.inject !== 'function') return () => {};
+    let nestedDispose = () => {};
+    let injectionDispose;
+    try {
+      injectionDispose = ctx.inject(['apiProxy', 'workspaceRegistry'], (readyCtx) => {
+        nestedDispose();
+        nestedDispose = installRemoteSessionCreateHook(readyCtx);
+        readyCtx.on?.('dispose', () => nestedDispose());
+      });
+    } catch (error) {
+      ctx.logger?.warn?.(`dsh-openssh-vpn: could not defer remote Workspace session hook: ${String(error)}`);
+      return () => {};
+    }
+    return () => {
+      nestedDispose();
+      if (typeof injectionDispose === 'function') injectionDispose();
+    };
   }
+
   if (sessions[HOOK]) return () => {};
 
   const original = sessions.create;
