@@ -162,17 +162,40 @@ export class RouteManager {
     this.mode = next;
   }
 
+  trackedUris() {
+    const uris = new Set();
+    for (const workspace of this.ctx.sshRemote.list()) {
+      if (workspace?.uri && workspace.status === 'connected') uris.add(workspace.uri);
+    }
+    // dsh-ssh-remote keeps persisted native-workspace mappings in an ordinary
+    // runtime Map. The dependency is pinned, so reading this internal map lets
+    // us preflight workspaces restored after a Harness restart before the first
+    // model Bash process needs GitHub.
+    const anchors = this.ctx.sshRemote.anchors;
+    if (anchors && typeof anchors.values === 'function') {
+      for (const anchor of anchors.values()) {
+        if (anchor?.uri) uris.add(anchor.uri);
+      }
+    }
+    return [...uris];
+  }
+
   async start() {
     this.unsubscribe = this.ctx.sshRemote.onStatus((change) => {
       if (change.status !== 'connected') return;
       const workspace = this.ctx.sshRemote.get(change.workspaceId);
       if (workspace?.uri) void this.ensure(workspace.uri, { force: true });
     });
+
+    for (const uri of this.trackedUris()) void this.ensure(uri, { force: true });
+
     this.timer = setInterval(() => {
-      for (const workspace of this.ctx.sshRemote.list()) {
-        if (workspace.status !== 'connected') continue;
-        const state = this.state(workspace.uri);
-        if (!state || state.route === 'direct' || state.route === 'unavailable') void this.ensure(workspace.uri, { force: true });
+      for (const uri of this.trackedUris()) {
+        const state = this.state(uri);
+        // Do not tear down a working proxy route underneath a long-lived shell
+        // merely because direct GitHub recovered. Proxy routes re-evaluate if
+        // their tunnel exits; direct/unavailable routes are refreshed normally.
+        if (!state || state.route === 'direct' || state.route === 'unavailable') void this.ensure(uri, { force: true });
       }
     }, this.config.healthIntervalMs);
     this.timer.unref?.();
@@ -279,10 +302,7 @@ export class RouteManager {
 
   async refreshAll() {
     const results = [];
-    for (const workspace of this.ctx.sshRemote.list()) {
-      if (workspace.status !== 'connected') continue;
-      results.push(await this.ensure(workspace.uri, { force: true }));
-    }
+    for (const uri of this.trackedUris()) results.push(await this.ensure(uri, { force: true }));
     return results;
   }
 
