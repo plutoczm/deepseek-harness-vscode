@@ -8,6 +8,9 @@ const nativeFetch = window.fetch.bind(window);
 let lastNetworkDiagnostics = null;
 let networkCheckRunning = false;
 
+const versionLabel = document.querySelector('.titlebar-brand span');
+if (versionLabel?.textContent.includes('0.8.0')) versionLabel.textContent = versionLabel.textContent.replace('0.8.0', '0.8.1');
+
 function selectedNetworkMode() {
   return document.querySelector('input[name="network-mode"]:checked')?.value || 'auto';
 }
@@ -51,9 +54,9 @@ function renderNetworkDiagnostics(data) {
   const originDiag = document.querySelector('#diag-git-origin');
   if (networkDiag) networkDiag.textContent = data?.direct?.ok ? `Direct ✓${data.direct.latencyMs ? ` · ${data.direct.latencyMs}ms` : ''}` : (data?.localProxy?.ok ? 'Direct ✕ · 7890 fallback ✓' : 'GitHub unavailable ✕');
   if (proxyDiag) proxyDiag.textContent = data?.localProxy?.ok ? '127.0.0.1:7890 ✓' : '127.0.0.1:7890 unavailable';
-  if (authDiag) authDiag.textContent = github.authenticated ? `${github.login || 'github.com'} ✓` : (github.ghAvailable ? 'gh 未登录' : 'gh 未安装');
-  if (originDiag) originDiag.textContent = github.isRepository ? `${github.remoteProtocol || '?'} · ${github.origin || 'origin 未配置'}` : '当前工作区不是 Git 仓库';
-  if (credentialDiag) {
+  if (authDiag && !github.skipped) authDiag.textContent = github.authenticated ? `${github.login || 'github.com'} ✓` : (github.ghAvailable ? 'gh 未登录' : 'gh 未安装');
+  if (originDiag && !github.skipped) originDiag.textContent = github.isRepository ? `${github.remoteProtocol || '?'} · ${github.origin || 'origin 未配置'}` : '当前工作区不是 Git 仓库';
+  if (credentialDiag && !github.skipped) {
     if (!github.isRepository) credentialDiag.textContent = '—';
     else if (github.brokenCredentialHelper) credentialDiag.textContent = '异常 helper ✕';
     else if (github.remoteProtocol === 'https' && github.credentialHelpers?.some((item) => item.includes('gh auth git-credential'))) credentialDiag.textContent = 'gh credential helper ✓';
@@ -61,7 +64,7 @@ function renderNetworkDiagnostics(data) {
     else credentialDiag.textContent = `${github.remoteProtocol || 'other'} · 不需要 HTTPS helper`;
   }
   const repair = document.querySelector('#repair-github-credential');
-  if (repair) repair.disabled = !github.ghAvailable || !github.authenticated || !github.isRepository || github.remoteProtocol !== 'https';
+  if (repair && !github.skipped) repair.disabled = !github.ghAvailable || !github.authenticated || !github.isRepository || github.remoteProtocol !== 'https';
 }
 
 async function checkNetwork({ quiet = false } = {}) {
@@ -74,12 +77,12 @@ async function checkNetwork({ quiet = false } = {}) {
   if (networkCheckRunning) return lastNetworkDiagnostics;
   networkCheckRunning = true;
   const button = document.querySelector('#check-github-network');
-  if (button) { button.disabled = true; button.textContent = '检查中…'; }
+  if (button && !quiet) { button.disabled = true; button.textContent = '检查中…'; }
   try {
     const response = await nativeFetch('/api/network/check', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ host, workspace }),
+      body: JSON.stringify({ host, workspace: quiet ? '' : workspace }),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
@@ -98,7 +101,7 @@ async function checkNetwork({ quiet = false } = {}) {
     return null;
   } finally {
     networkCheckRunning = false;
-    if (button) { button.disabled = false; button.textContent = '检查 GitHub'; }
+    if (button && !quiet) { button.disabled = false; button.textContent = '检查 GitHub'; }
   }
 }
 
@@ -121,7 +124,7 @@ async function repairCredential() {
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
     window.dshToast?.('GitHub 凭据已修复', `${data.github?.login || 'github.com'} · HTTPS credential helper 已重新配置。`, 'success');
-    await checkNetwork({ quiet: true });
+    await checkNetwork({ quiet: false });
   } catch (error) {
     window.dshToast?.('GitHub 凭据修复失败', error.message, 'error');
   } finally {
@@ -179,9 +182,6 @@ function installNetworkUi() {
 }
 
 installNetworkUi();
-
-const originalProxyToggle = document.querySelector('#use-local-proxy');
-if (originalProxyToggle) originalProxyToggle.closest('.proxy-toggle-row')?.remove();
 
 window.fetch = async (input, init = {}) => {
   let pathname = '';
