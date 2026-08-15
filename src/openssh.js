@@ -80,18 +80,28 @@ export function buildSshExecArgs(alias, { terminal = false, batchMode = true } =
   return [...baseOptions({ clearForwardings: true, terminal, batchMode }), target];
 }
 
-/** A tunnel owner intentionally keeps configured forwardings enabled. */
+/** A tunnel owner intentionally keeps configured forwards enabled and must fail if they cannot bind. */
 export function buildConfiguredTunnelArgs(alias) {
   const target = assertSshTarget(alias);
-  return [...baseOptions({ clearForwardings: false, terminal: false, batchMode: true }), '-N', target];
+  return [
+    ...baseOptions({ clearForwardings: false, terminal: false, batchMode: true }),
+    '-o', 'ExitOnForwardFailure=yes',
+    '-N',
+    target,
+  ];
 }
 
-/** Explicit fallback tunnel; configured forward failures are tolerated and verified independently. */
+/**
+ * Explicit fallback tunnel. We keep OpenSSH's effective config authoritative,
+ * including any unrelated user forwards, but make forward setup fail-loud so a
+ * process can never look healthy while the requested reverse tunnel is absent.
+ */
 export function buildExplicitTunnelArgs(alias, remotePort, localHost, localPort) {
   const target = assertSshTarget(alias);
   const reverse = `127.0.0.1:${Number(remotePort)}:${localHost}:${Number(localPort)}`;
   return [
     ...baseOptions({ clearForwardings: false, terminal: false, batchMode: true }),
+    '-o', 'ExitOnForwardFailure=yes',
     '-N',
     '-R', reverse,
     target,
@@ -123,6 +133,15 @@ export async function runRemoteCommand(alias, command, {
     durationMs: Date.now() - started,
     ...(result.error ? { error: result.error } : {}),
   };
+}
+
+/** Cheap authenticated baseline check before any managed tunnel is spawned. */
+export async function probeSshBaseline(alias, timeoutMs = 8_000) {
+  const result = await runRemoteCommand(alias, 'true', {
+    timeoutMs: timeoutMs + 2_000,
+    maxBytes: 128 * 1024,
+  });
+  return { ok: result.success, ...result };
 }
 
 export async function probeRemoteGitHub(alias, timeoutMs = 8_000) {
