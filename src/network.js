@@ -102,6 +102,7 @@ export class RouteManager {
       remotePort: state.remotePort,
       directOk: state.directOk,
       localProxyOk: state.localProxyOk,
+      localProxyDetail: state.localProxyDetail,
       configuredForward: state.configuredForward,
       lastCheckedAt: state.lastCheckedAt,
       error: state.error,
@@ -167,6 +168,7 @@ export class RouteManager {
     const [direct, local] = await Promise.all([directPromise, localPromise]);
     state.directOk = Boolean(direct?.ok);
     state.localProxyOk = Boolean(local?.ok);
+    state.localProxyDetail = local?.detail;
 
     if (this.mode === 'auto' && direct?.ok) {
       this.stopManagedTunnel(state);
@@ -175,6 +177,23 @@ export class RouteManager {
       state.remotePort = undefined;
       this.log(`${alias}: GitHub direct is healthy; using the server network.`);
       return state;
+    }
+
+    // If an external process (for example VS Code Remote SSH) already owns the
+    // configured RemoteForward and it works end-to-end, that is authoritative.
+    // Probe it before requiring a separate local proxy check so we do not
+    // disturb a working external tunnel.
+    const configured = state.configuredForward;
+    if (configured) {
+      const existingProxy = await this.adapters.probeProxy(alias, configured.listenPort, this.config.probeTimeoutMs);
+      if (existingProxy?.ok) {
+        this.stopManagedTunnel(state);
+        state.route = 'proxy';
+        state.source = 'existing-config-forward';
+        state.remotePort = configured.listenPort;
+        this.log(`${alias}: reusing existing RemoteForward 127.0.0.1:${configured.listenPort} -> ${this.config.localProxyHost}:${this.config.localProxyPort}.`);
+        return state;
+      }
     }
 
     if (!local?.ok) {
@@ -198,20 +217,7 @@ export class RouteManager {
       this.stopManagedTunnel(state);
     }
 
-    const configured = state.configuredForward;
     if (configured) {
-      // This is the VS Code case: 35052 may already be owned by an external
-      // SSH connection. Never attempt to bind it until we first prove it is
-      // absent, and never kill an external tunnel.
-      const existingProxy = await this.adapters.probeProxy(alias, configured.listenPort, this.config.probeTimeoutMs);
-      if (existingProxy?.ok) {
-        state.route = 'proxy';
-        state.source = 'existing-config-forward';
-        state.remotePort = configured.listenPort;
-        this.log(`${alias}: reusing existing RemoteForward 127.0.0.1:${configured.listenPort} -> ${this.config.localProxyHost}:${this.config.localProxyPort}.`);
-        return state;
-      }
-
       const managed = await this.tryConfiguredTunnel(alias, state, configured.listenPort);
       if (managed) return state;
     }
@@ -229,11 +235,15 @@ export class RouteManager {
   attachTunnel(state, child, source, remotePort) {
     let stderr = '';
     child.stderr?.setEncoding?.('utf8');
-    child.stderr?.on?.('data', (chunk) => { stderr = `${stderr}${chunk}`.slice(-8192); });
+    child.stderr?.on?.('data', (chunk) => {
+      stderr = `${stderr}${chunk}`.slice(-8192);
+      state.tunnelStderr = stderr;
+    });
     state.tunnel = child;
     state.tunnelSource = source;
     state.remotePort = remotePort;
     state.stopping = false;
+    state.tunnelStderr = '';
     child.once?.('exit', () => {
       if (state.tunnel !== child) return;
       state.tunnel = undefined;
@@ -244,28 +254,53 @@ export class RouteManager {
     });
   }
 
+  async waitForTunnel(alias, state, remotePort) {
+    const started = Date.now();
+    const timeoutMs = Math.max(2_000, this.config.probeTimeoutMs);
+    let lastProbe;
+
+    while (Date.now() - started < timeoutMs) {
+      if (!childAlive(state.tunnel)) {
+        return {
+          ok: false,
+          error: state.tunnelStderr?.trim() || 'SSH tunnel process exited before the forward became ready',
+        };
+      }
+
+      lastProbe = await this.adapters.probeProxy(alias, remotePort, Math.min(2_500, timeoutMs));
+      if (lastProbe?.ok) return { ok: true };
+      await this.adapters.delay(350);
+    }
+
+    return {
+      ok: false,
+      error: state.tunnelStderr?.trim()
+        || lastProbe?.stderr?.trim()
+        || lastProbe?.error
+        || `remote proxy 127.0.0.1:${remotePort} did not become ready within ${timeoutMs} ms`,
+    };
+  }
+
   async tryConfiguredTunnel(alias, state, remotePort) {
     this.stopManagedTunnel(state);
     const child = this.adapters.startConfiguredTunnel(alias);
     this.attachTunnel(state, child, 'managed-config-forward', remotePort);
-    await this.adapters.delay(650);
-    if (!childAlive(child)) {
-      this.stopManagedTunnel(state);
-      return false;
-    }
-    const working = await this.adapters.probeProxy(alias, remotePort, this.config.probeTimeoutMs);
-    if (!working?.ok) {
+    const ready = await this.waitForTunnel(alias, state, remotePort);
+    if (!ready.ok) {
+      state.error = `Configured RemoteForward ${remotePort} failed: ${ready.error}`;
       this.stopManagedTunnel(state);
       return false;
     }
     state.route = 'proxy';
     state.source = 'managed-config-forward';
+    state.error = undefined;
     this.log(`${alias}: started configured RemoteForward on 127.0.0.1:${remotePort}.`);
     return true;
   }
 
   async tryExplicitTunnel(alias, state) {
     this.stopManagedTunnel(state);
+    let lastError = state.error;
     for (let offset = 0; offset < 20; offset += 1) {
       const remotePort = this.config.remotePortStart + offset;
       const child = this.adapters.startExplicitTunnel(
@@ -275,22 +310,19 @@ export class RouteManager {
         this.config.localProxyPort,
       );
       this.attachTunnel(state, child, 'managed-explicit-forward', remotePort);
-      await this.adapters.delay(650);
-      if (!childAlive(child)) {
-        this.stopManagedTunnel(state);
-        continue;
-      }
-      const working = await this.adapters.probeProxy(alias, remotePort, this.config.probeTimeoutMs);
-      if (!working?.ok) {
+      const ready = await this.waitForTunnel(alias, state, remotePort);
+      if (!ready.ok) {
+        lastError = `Fallback RemoteForward ${remotePort} failed: ${ready.error}`;
         this.stopManagedTunnel(state);
         continue;
       }
       state.route = 'proxy';
       state.source = 'managed-explicit-forward';
+      state.error = undefined;
       this.log(`${alias}: opened fallback reverse proxy 127.0.0.1:${remotePort} -> ${this.config.localProxyHost}:${this.config.localProxyPort}.`);
       return true;
     }
-    state.error = 'All candidate fallback proxy ports failed.';
+    state.error = lastError || 'All candidate fallback proxy ports failed.';
     return false;
   }
 
