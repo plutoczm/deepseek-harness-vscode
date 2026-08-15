@@ -82,13 +82,20 @@ function fileTypeLabel(type) {
 }
 
 function setView(name) {
-  if (name === 'files' && runMode !== 'ssh') return;
+  if (name === 'files' && runMode !== 'ssh') {
+    window.dshToast?.('远程文件需要 SSH 模式', '先在首页切换到 SSH 并选择服务器。', 'info');
+    name = 'launch';
+  }
   document.querySelectorAll('.view-tab').forEach((button) => button.classList.toggle('active', button.dataset.view === name));
-  $('#launch-view').classList.toggle('hidden', name !== 'launch');
-  $('#files-view').classList.toggle('hidden', name !== 'files');
+  const views = ['launch', 'sessions', 'files', 'settings'];
+  for (const view of views) document.getElementById(`${view}-view`)?.classList.toggle('hidden', view !== name);
   if (name === 'files') {
     filesHostLabel.textContent = host.value.trim() || '未选择服务器';
     if (host.value.trim()) loadRemoteFiles(filesPath.value || currentFilesDirectory || '/').catch(() => undefined);
+  } else if (name === 'sessions') {
+    refresh().catch(() => undefined);
+  } else if (name === 'settings') {
+    loadAppearance();
   }
 }
 
@@ -141,10 +148,13 @@ async function check() {
   const button = $('#check');
   busy(button, true, '检查中…');
   try {
-    renderCheck(await api('/api/check', { method: 'POST', body: JSON.stringify({ host: host.value }) }));
+    const data = await api('/api/check', { method: 'POST', body: JSON.stringify({ host: host.value }) });
+    renderCheck(data);
+    window.dshToast?.('SSH 检查完成', `${host.value} · ${data.ready ? 'Harness runtime ready' : '需要处理运行环境'}`, data.ready ? 'success' : 'info');
   } catch (error) {
     checkBox.innerHTML = `<div class="instance-error">${esc(error.message)}</div>`;
     checkBox.classList.remove('hidden');
+    window.dshToast?.('SSH 检查失败', error.message, 'error');
   } finally {
     busy(button, false);
   }
@@ -156,9 +166,11 @@ async function installRuntime() {
   try {
     const data = await api('/api/runtime/install', { method: 'POST', body: JSON.stringify({ host: host.value }) });
     renderCheck(data.check);
+    window.dshToast?.('Node 22 已安装', `${host.value} · ${data.version}`, 'success');
   } catch (error) {
     launchStatus.textContent = error.message;
     launchStatus.className = 'launch-status bad';
+    window.dshToast?.('运行时安装失败', error.message, 'error');
   } finally {
     busy(button, false);
   }
@@ -170,9 +182,9 @@ async function setMode(mode) {
   document.querySelectorAll('.remote-only').forEach((element) => element.classList.toggle('hidden-by-mode', runMode !== 'ssh'));
   filesTab.classList.toggle('files-tab-disabled', runMode !== 'ssh');
   $('#workspace-label').textContent = runMode === 'ssh' ? '远程工作区' : '本机工作区';
-  $('#workspace-note').textContent = runMode === 'ssh' ? 'Harness 将在服务器上以这里作为项目根目录' : 'Harness 将在本机以这里作为项目根目录';
+  $('#workspace-note').textContent = runMode === 'ssh' ? 'Harness 与集成终端都以服务器上的这个目录作为上下文' : 'Harness 与集成终端都以本机这个目录作为上下文';
   $('#mode-note').textContent = runMode === 'ssh'
-    ? 'SSH 模式通过系统 SSH 配置连接服务器，并把 Harness Web UI 隧道到本机。'
+    ? 'SSH 模式通过系统 SSH 配置连接服务器；Harness、远程文件和终端共用同一个服务器上下文。'
     : '本机模式直接使用本机 Node/npm 启动官方 DeepSeek Harness，不经过 SSH。';
   $('#launch').querySelector('span').textContent = runMode === 'ssh' ? '连接并打开 Harness' : '打开本机 Harness';
   launchStatus.textContent = runMode === 'ssh' ? '准备好后启动远程 Harness。' : '准备好后启动本机 Harness。';
@@ -239,11 +251,18 @@ async function launch() {
     });
     launchStatus.textContent = `Harness 已启动 · ${data.url}`;
     launchStatus.className = 'launch-status good';
+    window.dispatchEvent(new CustomEvent('dsh:launched', { detail: {
+      mode: runMode,
+      host: runMode === 'ssh' ? host.value : 'Local',
+      workspace: workspace.value,
+      instance: data,
+    } }));
     await refresh();
     window.open(data.url, '_blank', 'noopener');
   } catch (error) {
     launchStatus.textContent = error.message;
     launchStatus.className = 'launch-status bad';
+    window.dshToast?.('Harness 启动失败', error.message, 'error', 5200);
     await refresh();
   } finally {
     busy(button, false);
@@ -282,9 +301,11 @@ async function saveAppearance(reset = false) {
     renderAppearance(settings);
     launchStatus.textContent = 'Harness 背景已更新，已打开的 Local / SSH 窗口也会同步。';
     launchStatus.className = 'launch-status good';
+    window.dshToast?.('Harness 背景已更新', 'Local 与 SSH 窗口将同步使用新的外观设置。', 'success');
   } catch (error) {
     launchStatus.textContent = error.message;
     launchStatus.className = 'launch-status bad';
+    window.dshToast?.('背景设置失败', error.message, 'error');
   } finally {
     busy(button, false);
   }
@@ -311,13 +332,18 @@ function renderRemoteEntries(data) {
       if (row.dataset.fileType === 'directory') loadRemoteFiles(row.dataset.filePath);
       else previewRemoteFile(row.dataset.filePath);
     };
+    row.oncontextmenu = (event) => {
+      if (row.dataset.fileType !== 'directory') return;
+      event.preventDefault();
+      window.dispatchEvent(new CustomEvent('dsh:new-terminal', { detail: { mode: 'ssh', host: host.value.trim(), cwd: row.dataset.filePath } }));
+    };
   });
 }
 
 async function loadRemoteFiles(pathValue = filesPath.value || '/') {
   const selectedHost = host.value.trim();
   if (!selectedHost) {
-    filesMessage.textContent = '请先在 Harness 页选择 SSH 服务器。';
+    filesMessage.textContent = '请先在首页选择 SSH 服务器。';
     filesMessage.className = 'files-message bad';
     return;
   }
@@ -329,7 +355,7 @@ async function loadRemoteFiles(pathValue = filesPath.value || '/') {
     currentFilesDirectory = data.current;
     currentFilesParent = data.parent;
     filesPath.value = data.current;
-    filesMessage.textContent = `${data.entries.length} 个项目 · ${data.current}`;
+    filesMessage.textContent = `${data.entries.length} 个项目 · ${data.current} · 右键目录可直接在终端打开`;
     filesMessage.className = 'files-message';
     renderRemoteEntries(data);
   } catch (error) {
@@ -401,6 +427,7 @@ async function copyFilePath() {
 function card(instance) {
   const terminalUrl = instance.url ? `<a class="instance-action open" href="${esc(instance.url)}" target="_blank" rel="noopener">打开 Harness</a>` : '';
   const stopButton = !['stopped', 'error'].includes(instance.status) ? `<button class="instance-action" data-stop="${esc(instance.id)}">停止</button>` : '';
+  const terminalButton = !['stopped', 'error'].includes(instance.status) ? `<button class="instance-action terminal-action" data-terminal-instance="${esc(instance.id)}">&gt;_ 打开终端</button>` : '';
   const mode = instance.mode === 'local' ? 'LOCAL' : 'SSH';
   return `
     <div class="instance">
@@ -411,13 +438,13 @@ function card(instance) {
       <div class="instance-path">${esc(instance.workspace)}</div>
       <div class="instance-meta">Node ${esc(instance.nodeVersion || '?')} · ${esc(instance.nodeSource || '?')}</div>
       ${instance.error ? `<div class="instance-error">${esc(instance.error)}</div>` : ''}
-      <div class="instance-actions">${terminalUrl}<button class="instance-action" data-log="${esc(instance.id)}">查看日志</button>${stopButton}</div>
+      <div class="instance-actions">${terminalUrl}${terminalButton}<button class="instance-action" data-log="${esc(instance.id)}">查看输出</button>${stopButton}</div>
     </div>
   `;
 }
 
 function emptyInstances() {
-  return '<div class="empty-icon">◇</div><strong>暂无实例</strong><span>启动 Harness 后会显示在这里。</span>';
+  return '<div class="empty-icon">◇</div><strong>暂无实例</strong><span>从首页启动 Harness 后会显示在这里。</span>';
 }
 
 async function refresh() {
@@ -427,6 +454,18 @@ async function refresh() {
   instances.innerHTML = empty ? emptyInstances() : data.instances.map(card).join('');
   instances.querySelectorAll('[data-log]').forEach((button) => { button.onclick = () => showLogs(button.dataset.log); });
   instances.querySelectorAll('[data-stop]').forEach((button) => { button.onclick = () => stop(button.dataset.stop); });
+  instances.querySelectorAll('[data-terminal-instance]').forEach((button) => {
+    button.onclick = () => {
+      const instance = data.instances.find((item) => item.id === button.dataset.terminalInstance);
+      if (!instance) return;
+      window.dispatchEvent(new CustomEvent('dsh:new-terminal', { detail: {
+        mode: instance.mode,
+        host: instance.host,
+        cwd: instance.workspace,
+        workspace: instance.workspace,
+      } }));
+    };
+  });
   if (selectedLog) await showLogs(selectedLog, false);
 }
 
@@ -439,6 +478,7 @@ async function showLogs(id, select = true) {
     logs.textContent = lastLogText || '(no logs yet)';
     copyLogsButton.disabled = !lastLogText;
     logs.scrollTop = logs.scrollHeight;
+    if (select) window.dispatchEvent(new CustomEvent('dsh:show-output'));
   } catch {
     if (select) selectedLog = '';
   }
@@ -446,6 +486,7 @@ async function showLogs(id, select = true) {
 
 async function stop(id) {
   await api(`/api/instances/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  window.dshToast?.('Harness 已停止', '实例已结束。', 'info');
   await refresh();
 }
 
@@ -456,6 +497,14 @@ async function copyLogs() {
   copyLogsButton.textContent = '已复制';
   setTimeout(() => { copyLogsButton.textContent = original; }, 1200);
 }
+
+window.__DSH_APP__ = {
+  setMode,
+  setView,
+  refresh,
+  launch,
+  getMode: () => runMode,
+};
 
 document.querySelectorAll('.view-tab').forEach((button) => { button.onclick = () => setView(button.dataset.view); });
 document.querySelectorAll('[data-target]').forEach((button) => { button.onclick = () => setMode(button.dataset.target); });
