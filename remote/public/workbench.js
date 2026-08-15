@@ -15,6 +15,19 @@ function writeRecents(items) {
   localStorage.setItem(RECENTS_KEY, JSON.stringify(items.slice(0, MAX_RECENTS)));
 }
 
+async function syncRecentsFromServer() {
+  try {
+    const response = await fetch('/api/recent-workspaces', { cache: 'no-store' });
+    if (!response.ok) return;
+    const data = await response.json();
+    if (!Array.isArray(data.items)) return;
+    writeRecents(data.items);
+    renderRecents();
+  } catch {
+    // localStorage remains a fast same-origin cache when the desktop store is unavailable.
+  }
+}
+
 function workspaceName(workspace) {
   const value = String(workspace || '').replace(/[\\/]+$/u, '');
   return value.split(/[\\/]/u).filter(Boolean).at(-1) || value || 'Workspace';
@@ -45,17 +58,30 @@ function rememberWorkspace(detail = {}) {
   const mode = detail.mode === 'ssh' || detail.instance?.mode === 'ssh' ? 'ssh' : 'local';
   const host = mode === 'ssh' ? String(detail.host || detail.instance?.host || '').trim() : 'Local';
   const key = `${mode}:${host}:${workspace}`;
-  const next = [{
+  const entry = {
     key,
     name: workspaceName(workspace),
     mode,
     host,
     workspace,
     lastUsed: new Date().toISOString(),
-  }, ...readRecents().filter((item) => item.key !== key)];
+  };
+  const next = [entry, ...readRecents().filter((item) => item.key !== key)];
   writeRecents(next);
   renderRecents();
-  updateWorkspaceContext(next[0]);
+  updateWorkspaceContext(entry);
+
+  fetch('/api/recent-workspaces', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ mode, host, workspace }),
+  }).then(async (response) => {
+    if (!response.ok) return;
+    const data = await response.json();
+    if (!Array.isArray(data.items)) return;
+    writeRecents(data.items);
+    renderRecents();
+  }).catch(() => undefined);
 }
 
 function updateWorkspaceContext(item) {
@@ -239,6 +265,7 @@ async function runDiagnostics() {
 
 function init() {
   renderRecents();
+  syncRecentsFromServer();
   $('#command-open')?.addEventListener('click', openPalette);
   $('#activity-brand')?.addEventListener('click', () => window.__DSH_APP__?.setView('launch'));
   $('#panel-collapse')?.addEventListener('click', () => togglePanel());
