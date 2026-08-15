@@ -278,7 +278,13 @@ function init() {
 
   document.addEventListener('keydown', (event) => {
     const modifier = event.ctrlKey || event.metaKey;
-    if (modifier && event.key.toLowerCase() === 'k') {
+    const activeElement = document.activeElement;
+    const terminalFocused = Boolean(activeElement?.closest?.('.xterm'));
+    const commandPaletteShortcut = event.key === 'F1'
+      || (modifier && event.shiftKey && event.key.toLowerCase() === 'p')
+      || (modifier && !event.shiftKey && !terminalFocused && event.key.toLowerCase() === 'k');
+
+    if (commandPaletteShortcut) {
       event.preventDefault();
       openPalette();
       return;
