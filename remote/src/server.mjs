@@ -3,6 +3,7 @@ import { existsSync, promises as fs } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { WebSocketServer } from 'ws';
 import { loadSshHosts, MIN_REMOTE_NODE } from './config.mjs';
 import {
   listRemoteFiles,
@@ -16,6 +17,7 @@ import { LocalHarnessManager, checkLocalRuntime, listLocalDirectories } from './
 import { UnifiedHarnessManager } from './unified-manager.mjs';
 import { appearanceStore } from './appearance.mjs';
 import { checkRemote, installPrivateNode22, listRemoteDirectories } from './ssh.mjs';
+import { TerminalManager, terminalProfiles } from './terminal-manager.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const publicDirectory = path.resolve(here, '../public');
@@ -24,12 +26,18 @@ const pdfjsCandidates = [
   path.resolve(here, '../node_modules/pdfjs-dist'),
 ].filter(Boolean);
 const pdfjsDirectory = pdfjsCandidates.find((candidate) => existsSync(candidate)) || pdfjsCandidates.at(-1);
+const xtermDirectory = path.resolve(here, '../node_modules/@xterm/xterm');
+const xtermFitDirectory = path.resolve(here, '../node_modules/@xterm/addon-fit');
+const xtermSearchDirectory = path.resolve(here, '../node_modules/@xterm/addon-search');
+const xtermWebLinksDirectory = path.resolve(here, '../node_modules/@xterm/addon-web-links');
 const pluginDirectory = path.resolve(here, '../harness-plugin');
 const remoteManager = new HarnessManager(pluginDirectory);
 const localManager = new LocalHarnessManager(pluginDirectory);
 const manager = new UnifiedHarnessManager(remoteManager, localManager);
+const terminalManager = new TerminalManager();
 const bindHost = '127.0.0.1';
 const port = Number(process.env.DSH_REMOTE_PORT || 4173);
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost']);
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -43,6 +51,9 @@ const MIME = {
   '.wasm': 'application/wasm',
   '.bcmap': 'application/octet-stream',
   '.pfb': 'application/octet-stream',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
 };
 
 function json(response, status, body) {
@@ -108,6 +119,19 @@ async function serveStatic(response, pathname) {
 
 async function servePdfJsVendor(response, pathname) {
   await serveFileFromRoot(response, pdfjsDirectory, pathname, '/vendor/pdfjs/', 'public, max-age=31536000, immutable');
+}
+
+async function serveTerminalVendor(response, pathname) {
+  const roots = [
+    ['/vendor/xterm/', xtermDirectory],
+    ['/vendor/xterm-fit/', xtermFitDirectory],
+    ['/vendor/xterm-search/', xtermSearchDirectory],
+    ['/vendor/xterm-web-links/', xtermWebLinksDirectory],
+  ];
+  const match = roots.find(([prefix]) => pathname.startsWith(prefix));
+  if (!match) return false;
+  await serveFileFromRoot(response, match[1], pathname, match[0], 'public, max-age=31536000, immutable');
+  return true;
 }
 
 function pdfContentDisposition(name, download) {
@@ -190,11 +214,15 @@ function instanceIdFrom(pathname, suffix = '') {
   return pattern.exec(pathname)?.[1];
 }
 
+function terminalIdFrom(pathname) {
+  return /^\/api\/terminals\/([^/]+)$/u.exec(pathname)?.[1];
+}
+
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`);
   try {
     if (url.pathname === '/api/health' && request.method === 'GET') {
-      json(response, 200, { ok: true, minRemoteNode: MIN_REMOTE_NODE.join('.'), modes: ['local', 'ssh'] });
+      json(response, 200, { ok: true, minRemoteNode: MIN_REMOTE_NODE.join('.'), modes: ['local', 'ssh'], terminal: true });
       return;
     }
 
@@ -257,6 +285,40 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    if (url.pathname === '/api/terminal/profiles' && request.method === 'GET') {
+      json(response, 200, { profiles: terminalProfiles() });
+      return;
+    }
+
+    if (url.pathname === '/api/terminals' && request.method === 'GET') {
+      json(response, 200, { terminals: terminalManager.list() });
+      return;
+    }
+
+    if (url.pathname === '/api/terminals' && request.method === 'POST') {
+      const body = await readJson(request);
+      try {
+        json(response, 201, terminalManager.create({
+          mode: body.mode,
+          host: body.host,
+          cwd: body.cwd,
+          profile: body.profile,
+          cols: body.cols,
+          rows: body.rows,
+        }));
+      } catch (error) {
+        json(response, 500, { error: error instanceof Error ? error.message : String(error), terminalId: error?.terminalId });
+      }
+      return;
+    }
+
+    const terminalId = terminalIdFrom(url.pathname);
+    if (terminalId && request.method === 'DELETE') {
+      const removed = terminalManager.remove(terminalId);
+      json(response, removed ? 200 : 404, removed ? { ok: true } : { error: 'Terminal not found.' });
+      return;
+    }
+
     if (url.pathname === '/api/launch' && request.method === 'POST') {
       const body = await readJson(request);
       try {
@@ -309,6 +371,10 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && url.pathname.startsWith('/vendor/xterm')) {
+      if (await serveTerminalVendor(response, url.pathname)) return;
+    }
+
     if (request.method === 'GET') {
       await serveStatic(response, url.pathname);
       return;
@@ -318,6 +384,34 @@ const server = http.createServer(async (request, response) => {
     if (!response.headersSent) json(response, 500, { error: error instanceof Error ? error.message : String(error) });
     else if (!response.destroyed) response.destroy(error instanceof Error ? error : new Error(String(error)));
   }
+});
+
+const terminalWebSockets = new WebSocketServer({ noServer: true });
+server.on('upgrade', (request, socket, head) => {
+  let requestUrl;
+  try { requestUrl = new URL(request.url ?? '/', `http://${request.headers.host || '127.0.0.1'}`); } catch { socket.destroy(); return; }
+  if (requestUrl.pathname !== '/ws/terminal') {
+    socket.destroy();
+    return;
+  }
+
+  let originOk = false;
+  try {
+    const origin = new URL(String(request.headers.origin || ''));
+    originOk = LOOPBACK_HOSTS.has(origin.hostname) && origin.host === request.headers.host;
+  } catch {
+    originOk = false;
+  }
+  if (!originOk) {
+    socket.destroy();
+    return;
+  }
+
+  const id = requestUrl.searchParams.get('id');
+  const token = requestUrl.searchParams.get('token');
+  terminalWebSockets.handleUpgrade(request, socket, head, (websocket) => {
+    if (!terminalManager.attach(id, token, websocket)) websocket.close(1008, 'Invalid terminal session');
+  });
 });
 
 function openBrowser(url) {
@@ -335,6 +429,7 @@ server.listen(port, bindHost, () => {
   const url = `http://${bindHost}:${actualPort}`;
   console.log(`DeepSeek Harness Desktop: ${url}`);
   console.log('Local mode uses your local Node/npm; SSH mode uses your system ssh client and ~/.ssh/config.');
+  console.log('Integrated terminal uses xterm.js + node-pty and is bound to this loopback-only launcher.');
   openBrowser(url);
 });
 
@@ -342,11 +437,13 @@ let shuttingDown = false;
 async function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
+  terminalManager.stopAll();
   await manager.stopAll().catch(() => undefined);
+  terminalWebSockets.close();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 3000).unref();
 }
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
-export { appearanceStore, localManager, manager, remoteManager, server };
+export { appearanceStore, localManager, manager, remoteManager, server, terminalManager };
