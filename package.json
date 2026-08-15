@@ -1,7 +1,7 @@
 {
-  "name": "dsh-ssh-vpn-bridge",
-  "version": "0.1.1",
-  "description": "DeepSeek Harness companion bridge for reliable SSH remote workspaces and automatic Windows VPN/proxy fallback.",
+  "name": "dsh-openssh-vpn",
+  "version": "0.2.0",
+  "description": "DeepSeek Harness native OpenSSH remote tools with direct-first GitHub routing and Windows VPN RemoteForward reuse/fallback.",
   "type": "module",
   "main": "src/index.js",
   "exports": {
@@ -13,11 +13,15 @@
     "src",
     "cordis.patch.yml",
     "README.md",
+    "WINDOWS-TEST.md",
     "LICENSE",
     "NOTICE"
   ],
   "engines": {
     "node": ">=22"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "*"
   },
   "dsh": {
     "bundle": {
@@ -25,7 +29,7 @@
     }
   },
   "scripts": {
-    "check": "node --check src/util.js && node --check src/network.js && node --check src/openssh-transport.js && node --check src/process.js && node --check src/terminal.js && node --check src/index.js",
+    "check": "node --check src/util.js && node --check src/openssh.js && node --check src/network.js && node --check src/engine.js && node --check src/tools.js && node --check src/index.js",
     "test": "node --test test/*.test.mjs"
   },
   "keywords": [
@@ -33,6 +37,7 @@
     "deepseek-harness",
     "dsh",
     "dsh-plugin",
+    "openssh",
     "ssh",
     "remote",
     "vpn",
