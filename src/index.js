@@ -1,6 +1,11 @@
 import { OpenSshEngine } from './engine.js';
 import { RouteManager } from './network.js';
 import { allOpenSshTools } from './tools.js';
+import { installOpenSshRuntime } from './runtime.js';
+import {
+  listRemoteWorkspaces,
+  openRemoteWorkspace,
+} from './remote-workspace.js';
 
 export const name = 'dsh-openssh-vpn';
 export const inject = ['tools', 'webServer'];
@@ -12,6 +17,7 @@ const GUIDANCE = [
   'These tools intentionally use the operating system ssh/scp executables and the user\'s real ~/.ssh/config rather than a second Node ssh2 credential stack.',
   'For ordinary commands ClearAllForwardings=yes is used so VS Code and Harness do not compete for configured RemoteForward ports.',
   'Network policy is direct-first; if remote GitHub direct access fails, an already-live RemoteForward targeting the Windows proxy is reused before Harness starts its own reverse tunnel.',
+  'SSH projects can be registered as Harness remote workspaces; Harness stores only a tiny local anchor while the openssh-remote agent preset executes project commands and file I/O on the mapped SSH host.',
 ].join(' ');
 
 function sendJson(res, status, value) {
@@ -99,6 +105,21 @@ function registerWebApi(ctx, routes, engine) {
           return sendJson(res, 200, { ok: true, result });
         }
 
+        if (req.method === 'GET' && path === `${API}/workspaces`) {
+          const workspaces = await listRemoteWorkspaces(ctx);
+          return sendJson(res, 200, { ok: true, workspaces });
+        }
+
+        if (req.method === 'POST' && path === `${API}/workspace/open`) {
+          const body = await readJson(req);
+          const alias = String(body.alias || '').trim();
+          const remotePath = String(body.remotePath || '').trim();
+          if (!alias) return sendJson(res, 400, { ok: false, error: 'alias is required' });
+          if (!remotePath) return sendJson(res, 400, { ok: false, error: 'remotePath is required' });
+          const workspace = await openRemoteWorkspace(ctx, engine, alias, remotePath);
+          return sendJson(res, 200, workspace);
+        }
+
         return sendJson(res, 404, { ok: false, error: 'unknown api' });
       } catch (error) {
         return sendJson(res, 500, {
@@ -114,6 +135,7 @@ export function apply(ctx, config = {}) {
   const routes = new RouteManager(ctx, config);
   routes.start();
   const engine = new OpenSshEngine(routes);
+  const disposeRuntime = installOpenSshRuntime({ engine, routes });
   const disposers = allOpenSshTools(engine).map((tool) => ctx.tools.register(tool));
   const disposeWebApi = registerWebApi(ctx, routes, engine);
 
@@ -135,6 +157,7 @@ export function apply(ctx, config = {}) {
     disposePrompt?.();
     disposeWebApi?.();
     for (const dispose of disposers.reverse()) dispose?.();
+    disposeRuntime?.();
     await routes.stop();
   };
 }
