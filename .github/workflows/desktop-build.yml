@@ -30,17 +30,27 @@ jobs:
         run: npm run check
       - name: Run unit tests
         run: npm test
+      - name: Smoke-test integrated PTY
+        shell: pwsh
+        run: |
+          node -e "import('./src/terminal-manager.mjs').then(({TerminalManager}) => { const manager = new TerminalManager(); const terminal = manager.create({ mode: 'local', cwd: process.cwd(), profile: 'cmd', cols: 80, rows: 20 }); if (!terminal.id || terminal.status !== 'running') throw new Error('PTY did not enter running state'); setTimeout(() => { manager.remove(terminal.id); console.log('PTY_OK'); }, 300); }).catch((error) => { console.error(error); process.exit(1); });"
       - name: Build Windows installer
         run: npm run desktop:win
-      - name: Verify packaged PDF.js runtime
+      - name: Smoke-test PTY under Electron ABI
+        shell: pwsh
+        run: npx electron test/electron-pty-smoke.cjs
+      - name: Verify packaged desktop runtime
         shell: pwsh
         run: |
           $required = @(
             'dist/win-unpacked/resources/pdfjs-dist/build/pdf.mjs',
-            'dist/win-unpacked/resources/pdfjs-dist/build/pdf.worker.mjs'
+            'dist/win-unpacked/resources/pdfjs-dist/build/pdf.worker.mjs',
+            'dist/win-unpacked/resources/app/node_modules/@xterm/xterm/lib/xterm.js',
+            'dist/win-unpacked/resources/app/node_modules/@xterm/addon-fit/lib/addon-fit.js',
+            'dist/win-unpacked/resources/app/node_modules/ws/index.js'
           )
           foreach ($path in $required) {
-            if (!(Test-Path $path)) { throw "Missing packaged PDF.js asset: $path" }
+            if (!(Test-Path $path)) { throw "Missing packaged desktop asset: $path" }
           }
           $assetDirs = @(
             'dist/win-unpacked/resources/pdfjs-dist/cmaps',
@@ -52,9 +62,13 @@ jobs:
             $files = Get-ChildItem $dir -File -Recurse -ErrorAction Stop
             if ($files.Count -lt 1) { throw "Packaged PDF.js asset directory is empty: $dir" }
           }
+          $ptyDir = 'dist/win-unpacked/resources/app/node_modules/node-pty'
+          if (!(Test-Path $ptyDir)) { throw "Missing packaged node-pty directory: $ptyDir" }
+          $ptyNative = Get-ChildItem $ptyDir -Filter '*.node' -File -Recurse -ErrorAction Stop
+          if ($ptyNative.Count -lt 1) { throw 'Packaged node-pty has no native .node binary.' }
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
-          name: DeepSeek-Harness-Remote-Windows-x64
+          name: DeepSeek-Harness-Desktop-Windows-x64
           path: remote/dist/*.exe
           if-no-files-found: error

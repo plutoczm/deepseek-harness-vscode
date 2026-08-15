@@ -12,223 +12,272 @@
   <link rel="stylesheet" href="/ui-polish.css">
   <link rel="stylesheet" href="/network-options.css">
   <link rel="stylesheet" href="/mode.css">
+  <link rel="stylesheet" href="/workbench.css">
+  <link rel="stylesheet" href="/terminal.css">
+  <link rel="stylesheet" href="/vendor/xterm/css/xterm.css">
 </head>
 <body>
-  <main class="shell">
-    <header class="topbar">
-      <div class="brand">
-        <div class="brand-mark brand-mark-whale" aria-hidden="true"><img src="/whale-mark.svg" alt=""></div>
-        <div>
-          <div class="eyebrow">DEEPSEEK HARNESS · DESKTOP</div>
-          <h1>DeepSeek Harness Desktop</h1>
-          <p>本机或 SSH 服务器都可以运行官方 Harness，并共用会话费用、API 余额和桌面背景。</p>
+  <div class="workbench-app">
+    <aside class="activity-bar" aria-label="主导航">
+      <button id="activity-brand" class="activity-brand" type="button" title="DeepSeek Harness Desktop"><img src="/whale-mark.svg" alt=""></button>
+      <nav class="activity-nav">
+        <button class="activity-item view-tab active" type="button" data-view="launch"><span class="activity-icon">⌂</span><span class="activity-label">首页</span></button>
+        <button class="activity-item view-tab" type="button" data-view="sessions"><span class="activity-icon">◉</span><span class="activity-label">会话</span></button>
+        <button id="files-tab" class="activity-item view-tab" type="button" data-view="files"><span class="activity-icon">▣</span><span class="activity-label">远程文件</span></button>
+        <button class="activity-item view-tab" type="button" data-view="settings"><span class="activity-icon">⚙</span><span class="activity-label">设置</span></button>
+      </nav>
+      <div class="activity-spacer"></div>
+      <button id="command-open" class="activity-bottom-button" type="button"><span class="activity-icon">⌕</span><span class="activity-label">命令面板 · Ctrl+K</span></button>
+    </aside>
+
+    <div class="workbench-main">
+      <header class="workbench-titlebar">
+        <div class="titlebar-brand">
+          <div><strong>DeepSeek Harness Desktop</strong><span>Local + SSH Workbench · 0.8.0</span></div>
         </div>
+        <div id="titlebar-workspace" class="titlebar-workspace"><strong>未选择工作区</strong><span class="titlebar-workspace-path">从首页选择本机或 SSH 项目</span></div>
+        <div class="titlebar-actions">
+          <span class="status-chip optional"><span class="live-dot"></span>Harness Workbench</span>
+          <span class="status-chip kbd-chip">Ctrl+K</span>
+        </div>
+      </header>
+
+      <div class="workbench-scroll">
+        <main class="shell">
+          <section id="launch-view" class="view-panel">
+            <div class="home-hero">
+              <div class="home-hero-copy">
+                <span class="home-overline">DEEPSEEK HARNESS WORKBENCH</span>
+                <h1>从工作区开始，而不是从配置开始。</h1>
+                <p>最近项目、一键启动、本机与 SSH、集成终端都围绕同一个 workspace 工作。终端命令本身不会产生 DeepSeek Token。</p>
+              </div>
+              <div class="hero-actions">
+                <button id="open-terminal" class="button secondary" type="button">&gt;_ 新建终端</button>
+                <button class="button quick-primary" type="button" onclick="document.getElementById('workspace').focus()">选择工作区</button>
+              </div>
+            </div>
+
+            <section class="surface recent-section">
+              <div class="recent-header"><div><span class="section-kicker">CONTINUE</span><h2>最近工作区</h2></div><span class="recent-hint">单击载入 · 双击直接启动 Harness</span></div>
+              <div id="recent-workspaces" class="recent-grid"><div class="recent-empty">正在读取最近工作区…</div></div>
+            </section>
+
+            <section class="workspace-grid">
+              <article class="surface launch-panel">
+                <div class="section-title">
+                  <div><span class="section-kicker">NEW SESSION</span><h2>启动 Harness</h2></div>
+                  <span class="section-index">01</span>
+                </div>
+
+                <div class="target-switch" role="group" aria-label="运行位置">
+                  <button class="target-option active" type="button" data-target="local">本机 Local</button>
+                  <button class="target-option" type="button" data-target="ssh">SSH 远程服务器</button>
+                </div>
+                <p id="mode-note" class="mode-note">本机模式直接使用本机 Node/npm 启动官方 DeepSeek Harness。</p>
+
+                <div class="launch-form-grid">
+                  <div class="launch-primary-fields">
+                    <div id="ssh-fields" class="field-group remote-only hidden-by-mode">
+                      <div class="field-head"><label for="host">SSH 服务器</label><span id="ssh-config" class="field-note"></span></div>
+                      <div class="control-row">
+                        <div class="input-shell server-input"><span class="input-icon" aria-hidden="true">⌁</span><input id="host" list="hosts" autocomplete="off" placeholder="例如 GDWYY70"><datalist id="hosts"></datalist></div>
+                        <button id="check" class="button secondary">检查连接</button>
+                      </div>
+                      <div id="check-result" class="runtime-panel hidden"></div>
+                    </div>
+
+                    <div class="field-group">
+                      <div class="field-head"><label id="workspace-label" for="workspace">本机工作区</label><span id="workspace-note" class="field-note">Harness 将以这里作为项目根目录</span></div>
+                      <div class="control-row">
+                        <div class="input-shell"><span class="input-icon folder-glyph" aria-hidden="true"></span><input id="workspace" autocomplete="off" placeholder="例如 D:\Projects\my-project"></div>
+                        <button id="browse" class="button secondary">浏览</button>
+                      </div>
+                      <div id="browser" class="file-browser hidden"></div>
+                    </div>
+                  </div>
+
+                  <aside class="launch-side">
+                    <div id="local-runtime-note" class="local-runtime-note">正在检查本机 Node/npm 环境…</div>
+                    <details class="network-options remote-only hidden-by-mode">
+                      <summary><span>高级网络</span><span id="network-summary" class="network-summary">远程服务器直连 · 推荐</span></summary>
+                      <div class="network-options-body">
+                        <label class="proxy-toggle-row" for="use-local-proxy">
+                          <input id="use-local-proxy" type="checkbox">
+                          <span class="proxy-toggle-copy"><strong>故障时使用本机代理 127.0.0.1:7890</strong><span>仅影响新实例内的 Bash / Git / curl / wget 等工具流量。</span></span>
+                        </label>
+                        <p class="proxy-route-note">DeepSeek 模型请求保持远程服务器直连。</p>
+                      </div>
+                    </details>
+                    <div class="env-callout remote-only hidden-by-mode">
+                      <div class="env-icon" aria-hidden="true">⌘</div>
+                      <div class="env-copy"><strong>远程 Python 环境独立选择</strong><span>首次 Bash 可选 Conda / venv；使用 <code>/env</code> 随时切换。</span></div>
+                      <span class="env-badge">SSH</span>
+                    </div>
+                  </aside>
+                </div>
+
+                <div class="launch-footer">
+                  <p id="launch-status" class="launch-status">准备好后启动本机 Harness。</p>
+                  <button id="launch" class="button primary"><span>打开 Harness</span><span aria-hidden="true">↗</span></button>
+                </div>
+              </article>
+            </section>
+          </section>
+
+          <section id="sessions-view" class="view-panel hidden">
+            <section class="surface sessions-panel">
+              <div class="sessions-toolbar">
+                <div class="sessions-toolbar-copy"><span class="section-kicker">SESSION CENTER</span><h2>运行中的工作会话</h2><p>Harness、工作区和终端保持相同上下文。可以直接为任意实例打开对应终端。</p></div>
+                <div class="sessions-actions"><button id="refresh" class="button secondary">↻ 刷新实例</button></div>
+              </div>
+              <div id="instances" class="instances empty-state"><div class="empty-icon">◇</div><strong>暂无实例</strong><span>从首页启动 Harness 后会显示在这里。</span></div>
+            </section>
+          </section>
+
+          <section id="files-view" class="view-panel hidden">
+            <section class="surface remote-files-panel">
+              <div class="remote-files-header">
+                <div><span class="section-kicker">REMOTE SERVER</span><h2>远程文件</h2><p>通过当前 SSH 用户浏览服务器。文本、图片和 PDF 可直接预览；目录可以直接在集成终端中打开。</p></div>
+                <div class="server-chip"><span class="status-dot running"></span><span id="files-host-label">未选择服务器</span></div>
+              </div>
+              <div class="remote-toolbar">
+                <div class="input-shell path-shell"><span class="input-icon folder-glyph" aria-hidden="true"></span><input id="files-path" value="/" autocomplete="off" spellcheck="false" aria-label="远程路径"></div>
+                <button id="files-go" class="button secondary">转到</button>
+                <button id="files-up" class="button secondary">上一级</button>
+                <button id="files-refresh" class="button secondary">刷新</button>
+                <button id="files-open-terminal" class="button secondary">&gt;_ 在终端打开</button>
+                <button id="files-use-workspace" class="button secondary accent">设为 Harness 工作区</button>
+              </div>
+              <div id="files-message" class="files-message">切换到 SSH 模式并选择服务器后即可浏览。</div>
+              <div class="remote-files-layout">
+                <div class="remote-list-shell">
+                  <div class="remote-list-head"><span>名称</span><span>大小</span><span>修改时间</span></div>
+                  <div id="remote-file-list" class="remote-file-list empty-file-list"><div class="file-empty"><span>⌁</span><strong>等待连接</strong><small>在首页选择 SSH 服务器。</small></div></div>
+                </div>
+                <aside class="file-preview-shell">
+                  <div class="preview-head"><div><span class="section-kicker">PREVIEW</span><strong id="preview-name">未选择文件</strong></div><button id="copy-file-path" class="icon-button text-button" disabled>复制路径</button></div>
+                  <div id="preview-path" class="preview-path"></div>
+                  <div id="file-preview" class="file-preview empty-preview"><div class="preview-empty-icon">⌘</div><strong>选择一个文件</strong><span>文本、常见图片和 PDF 可以直接预览。</span></div>
+                </aside>
+              </div>
+            </section>
+          </section>
+
+          <section id="settings-view" class="view-panel hidden">
+            <div class="settings-layout">
+              <aside class="surface settings-rail">
+                <div class="settings-nav">
+                  <button class="active" type="button" data-settings-target="settings-appearance">外观</button>
+                  <button type="button" data-settings-target="settings-runtime">运行环境</button>
+                  <button type="button" data-settings-target="settings-shortcuts">快捷键</button>
+                </div>
+              </aside>
+              <div class="settings-content">
+                <section id="settings-appearance" class="surface settings-card">
+                  <span class="section-kicker">APPEARANCE</span><h2>Harness 背景</h2><p class="settings-description">外观属于全局低频设置，不再占用首页启动流程。Local 与 SSH Harness 窗口共同使用。</p>
+                  <details class="appearance-options" open>
+                    <summary><span>Harness 背景</span><span>橘子洲头 · 全局</span></summary>
+                    <div class="appearance-options-body">
+                      <label class="appearance-toggle"><input id="wallpaper-enabled" type="checkbox" checked> 启用桌面 Harness 背景</label>
+                      <div id="wallpaper-preview" class="appearance-preview"></div>
+                      <div class="appearance-field"><label for="wallpaper-url">背景图片 URL</label><input id="wallpaper-url" type="url" spellcheck="false" autocomplete="off"></div>
+                      <div class="appearance-range"><span>面板不透明度</span><input id="wallpaper-opacity" type="range" min="50" max="100" step="1"><output id="wallpaper-opacity-value">82%</output></div>
+                      <div class="appearance-range"><span>背景模糊</span><input id="wallpaper-blur" type="range" min="0" max="32" step="1"><output id="wallpaper-blur-value">16px</output></div>
+                      <div class="appearance-actions"><button id="save-wallpaper" class="button secondary" type="button">应用背景</button><button id="reset-wallpaper" class="button secondary" type="button">恢复橘子洲默认图</button></div>
+                      <p class="appearance-credit">默认图：橘子洲毛泽东青年艺术雕塑，Wikimedia Commons，Huangdan2060，CC BY 3.0。</p>
+                    </div>
+                  </details>
+                </section>
+                <section id="settings-runtime" class="surface settings-card">
+                  <span class="section-kicker">DIAGNOSTICS</span><h2>运行环境诊断</h2><p class="settings-description">一次检查本机 Node、Python、SSH 上下文和集成终端组件，便于排查启动问题。</p>
+                  <div class="diagnostic-grid">
+                    <div class="diagnostic-item"><span>Node</span><strong id="diag-node">未检查</strong></div>
+                    <div class="diagnostic-item"><span>Harness Runtime</span><strong id="diag-runtime">未检查</strong></div>
+                    <div class="diagnostic-item"><span>Python</span><strong id="diag-python">未检查</strong></div>
+                    <div class="diagnostic-item"><span>SSH</span><strong id="diag-ssh">未检查</strong></div>
+                    <div class="diagnostic-item"><span>Terminal</span><strong id="diag-terminal">未检查</strong></div>
+                    <div class="diagnostic-item"><span>DeepSeek Balance</span><strong>Harness 窗口实时显示</strong></div>
+                  </div>
+                  <div style="margin-top:12px"><button id="run-diagnostics" class="button secondary" type="button">运行诊断</button></div>
+                </section>
+                <section id="settings-shortcuts" class="surface settings-card">
+                  <span class="section-kicker">KEYBOARD</span><h2>快捷键</h2><p class="settings-description">参考 VS Code 的高频操作路径，保持终端和命令面板随时可达。</p>
+                  <div class="diagnostic-grid">
+                    <div class="diagnostic-item"><span>命令面板</span><strong>Ctrl + K</strong></div>
+                    <div class="diagnostic-item"><span>显示 / 隐藏终端</span><strong>Ctrl + `</strong></div>
+                    <div class="diagnostic-item"><span>新建终端</span><strong>Ctrl + Shift + `</strong></div>
+                    <div class="diagnostic-item"><span>终端搜索</span><strong>Ctrl + F</strong></div>
+                  </div>
+                </section>
+              </div>
+            </div>
+          </section>
+        </main>
       </div>
-      <div class="local-chip"><span class="live-dot"></span>Local + SSH</div>
-    </header>
 
-    <nav class="view-tabs" aria-label="主导航">
-      <button class="view-tab active" data-view="launch">Harness</button>
-      <button id="files-tab" class="view-tab" data-view="files">远程文件</button>
-    </nav>
-
-    <section id="launch-view" class="view-panel">
-      <section class="workspace-grid">
-        <article class="surface launch-panel">
-          <div class="section-title">
-            <div>
-              <span class="section-kicker">NEW SESSION</span>
-              <h2>启动 Harness</h2>
-            </div>
-            <span class="section-index">01</span>
-          </div>
-
-          <div class="target-switch" role="group" aria-label="运行位置">
-            <button class="target-option active" type="button" data-target="local">本机 Local</button>
-            <button class="target-option" type="button" data-target="ssh">SSH 远程服务器</button>
-          </div>
-          <p id="mode-note" class="mode-note">本机模式直接使用本机 Node/npm 启动官方 DeepSeek Harness。</p>
-
-          <div id="ssh-fields" class="field-group remote-only hidden-by-mode">
-            <div class="field-head">
-              <label for="host">SSH 服务器</label>
-              <span id="ssh-config" class="field-note"></span>
-            </div>
-            <div class="control-row">
-              <div class="input-shell server-input">
-                <span class="input-icon" aria-hidden="true">⌁</span>
-                <input id="host" list="hosts" autocomplete="off" placeholder="例如 GDWYY70">
-                <datalist id="hosts"></datalist>
-              </div>
-              <button id="check" class="button secondary">检查连接</button>
-            </div>
-            <div id="check-result" class="runtime-panel hidden"></div>
-          </div>
-
-          <div class="divider"></div>
-
-          <div class="field-group">
-            <div class="field-head">
-              <label id="workspace-label" for="workspace">本机工作区</label>
-              <span id="workspace-note" class="field-note">Harness 将以这里作为项目根目录</span>
-            </div>
-            <div class="control-row">
-              <div class="input-shell">
-                <span class="input-icon folder-glyph" aria-hidden="true"></span>
-                <input id="workspace" autocomplete="off" placeholder="例如 D:\Projects\my-project">
-              </div>
-              <button id="browse" class="button secondary">浏览</button>
-            </div>
-            <div id="browser" class="file-browser hidden"></div>
-            <div id="local-runtime-note" class="local-runtime-note">正在检查本机 Node/npm 环境…</div>
-          </div>
-
-          <details class="network-options remote-only hidden-by-mode">
-            <summary>
-              <span>高级网络</span>
-              <span id="network-summary" class="network-summary">远程服务器直连 · 推荐</span>
-            </summary>
-            <div class="network-options-body">
-              <label class="proxy-toggle-row" for="use-local-proxy">
-                <input id="use-local-proxy" type="checkbox">
-                <span class="proxy-toggle-copy">
-                  <strong>网络故障时使用本机代理 127.0.0.1:7890</strong>
-                  <span>默认关闭。仅对新启动实例的 Bash / Git / curl / wget 等工具流量启用；DeepSeek 模型请求仍保持远程服务器直连。</span>
-                </span>
-              </label>
-              <p class="proxy-route-note">Harness 内置 <code>web_search</code> 不依赖这个开关；只有远程命令本身无法访问 GitHub 或外网时才建议开启。</p>
-            </div>
-          </details>
-
-          <div class="env-callout remote-only hidden-by-mode">
-            <div class="env-icon" aria-hidden="true">⌘</div>
-            <div class="env-copy">
-              <strong>每个远程 Harness 会话独立选择 Python 环境</strong>
-              <span>首次执行 Bash 时会弹出 Conda / venv 单选；随时使用 <code>/env</code> 切换。</span>
-            </div>
-            <span class="env-badge">SSH ONLY</span>
-          </div>
-
-          <details class="appearance-options" open>
-            <summary><span>Harness 背景</span><span>橘子洲头 · 全局</span></summary>
-            <div class="appearance-options-body">
-              <label class="appearance-toggle"><input id="wallpaper-enabled" type="checkbox" checked> 启用桌面 Harness 背景</label>
-              <div id="wallpaper-preview" class="appearance-preview"></div>
-              <div class="appearance-field">
-                <label for="wallpaper-url">背景图片 URL</label>
-                <input id="wallpaper-url" type="url" spellcheck="false" autocomplete="off">
-              </div>
-              <div class="appearance-range"><span>面板不透明度</span><input id="wallpaper-opacity" type="range" min="50" max="100" step="1"><output id="wallpaper-opacity-value">82%</output></div>
-              <div class="appearance-range"><span>背景模糊</span><input id="wallpaper-blur" type="range" min="0" max="32" step="1"><output id="wallpaper-blur-value">16px</output></div>
-              <div class="appearance-actions">
-                <button id="save-wallpaper" class="button secondary" type="button">应用背景</button>
-                <button id="reset-wallpaper" class="button secondary" type="button">恢复橘子洲默认图</button>
-              </div>
-              <p class="appearance-credit">默认图：橘子洲毛泽东青年艺术雕塑，Wikimedia Commons，Huangdan2060，CC BY 3.0。设置对 Local 与 SSH 打开的 Harness 窗口同时生效。</p>
-            </div>
-          </details>
-
-          <div class="launch-footer">
-            <p id="launch-status" class="launch-status">准备好后启动本机 Harness。</p>
-            <button id="launch" class="button primary">
-              <span>打开 Harness</span><span aria-hidden="true">↗</span>
-            </button>
-          </div>
-        </article>
-
-        <aside class="surface instances-panel">
-          <div class="section-title compact">
-            <div>
-              <span class="section-kicker">ACTIVE INSTANCES</span>
-              <h2>实例</h2>
-            </div>
-            <button id="refresh" class="icon-button" title="刷新实例" aria-label="刷新实例">↻</button>
-          </div>
-          <div id="instances" class="instances empty-state">
-            <div class="empty-icon">◇</div>
-            <strong>暂无实例</strong>
-            <span>启动 Harness 后会显示在这里。</span>
-          </div>
-        </aside>
-      </section>
-
-      <section class="surface log-panel">
-        <div class="log-header">
-          <div>
-            <span class="section-kicker">HARNESS OUTPUT</span>
-            <h2>日志</h2>
-          </div>
-          <div class="log-tools">
-            <span id="log-title" class="log-context">选择一个实例查看日志</span>
-            <button id="copy-logs" class="icon-button text-button" disabled>复制日志</button>
+      <section id="bottom-panel" class="bottom-panel collapsed" aria-label="集成面板">
+        <div class="panel-toolbar">
+          <div class="panel-tabs"><button class="panel-tab active" type="button" data-panel-tab="terminal">TERMINAL</button><button class="panel-tab" type="button" data-panel-tab="output">OUTPUT</button></div>
+          <div class="panel-toolbar-actions">
+            <div id="terminal-context" class="terminal-context"><span>未选择终端</span></div>
+            <button id="terminal-search-open" class="panel-icon-button" type="button" title="搜索终端">⌕</button>
+            <button id="terminal-font-minus" class="panel-icon-button" type="button" title="减小字体">A−</button>
+            <button id="terminal-font-plus" class="panel-icon-button" type="button" title="增大字体">A+</button>
+            <span class="panel-separator"></span>
+            <button id="terminal-new" class="panel-icon-button" type="button" title="新建终端">＋</button>
+            <button id="terminal-split" class="panel-icon-button" type="button" title="分割终端">▥</button>
+            <button id="terminal-kill" class="panel-icon-button" type="button" title="关闭当前终端">⌫</button>
+            <span class="panel-separator"></span>
+            <button id="panel-maximize" class="panel-icon-button" type="button" title="最大化面板">□</button>
+            <button id="panel-collapse" class="panel-icon-button" type="button" title="收起面板">⌃</button>
+            <button id="panel-close" class="panel-icon-button" type="button" title="关闭面板">×</button>
           </div>
         </div>
-        <pre id="log-view"><span class="log-placeholder">日志会显示在这里。</span></pre>
-      </section>
-    </section>
-
-    <section id="files-view" class="view-panel hidden">
-      <section class="surface remote-files-panel">
-        <div class="remote-files-header">
-          <div>
-            <span class="section-kicker">REMOTE SERVER</span>
-            <h2>远程文件</h2>
-            <p>通过当前 SSH 用户浏览服务器文件。文本、图片和 PDF 可直接预览，修改代码仍交给 Harness。</p>
-          </div>
-          <div class="server-chip"><span class="status-dot running"></span><span id="files-host-label">未选择服务器</span></div>
-        </div>
-
-        <div class="remote-toolbar">
-          <div class="input-shell path-shell">
-            <span class="input-icon folder-glyph" aria-hidden="true"></span>
-            <input id="files-path" value="/" autocomplete="off" spellcheck="false" aria-label="远程路径">
-          </div>
-          <button id="files-go" class="button secondary">转到</button>
-          <button id="files-up" class="button secondary">上一级</button>
-          <button id="files-refresh" class="button secondary">刷新</button>
-          <button id="files-use-workspace" class="button secondary accent">设为 Harness 工作区</button>
-        </div>
-
-        <div id="files-message" class="files-message">切换到 SSH 模式并选择服务器后即可浏览。</div>
-
-        <div class="remote-files-layout">
-          <div class="remote-list-shell">
-            <div class="remote-list-head">
-              <span>名称</span><span>大小</span><span>修改时间</span>
-            </div>
-            <div id="remote-file-list" class="remote-file-list empty-file-list">
-              <div class="file-empty"><span>⌁</span><strong>等待连接</strong><small>切换到 Harness 页选择 SSH 服务器。</small></div>
-            </div>
-          </div>
-
-          <aside class="file-preview-shell">
-            <div class="preview-head">
-              <div>
-                <span class="section-kicker">PREVIEW</span>
-                <strong id="preview-name">未选择文件</strong>
+        <div class="panel-content">
+          <div id="terminal-panel-view" class="panel-view">
+            <div class="terminal-layout">
+              <aside class="terminal-sidebar">
+                <div class="terminal-sidebar-head"><span>TERMINALS</span><button id="terminal-create" class="terminal-create" type="button" title="选择 Shell">＋</button></div>
+                <div id="terminal-tabs-list" class="terminal-tabs-list"></div>
+                <div id="terminal-sidebar-foot" class="terminal-sidebar-foot">Local / SSH PTY</div>
+                <div id="terminal-profile-menu" class="terminal-profile-menu hidden"></div>
+              </aside>
+              <div class="terminal-stage">
+                <div id="terminal-panes" class="terminal-panes"></div>
+                <div id="terminal-empty" class="terminal-empty"><div class="terminal-empty-inner"><div class="terminal-empty-icon">&gt;_</div><strong>集成终端</strong><span>点击 ＋ 或按 Ctrl+Shift+`，在当前 Local / SSH workspace 打开真实交互式终端。</span></div></div>
+                <div id="terminal-search" class="terminal-search hidden"><input id="terminal-search-input" type="text" placeholder="在终端中查找"><button id="terminal-search-prev" type="button" title="上一个">↑</button><button id="terminal-search-next" type="button" title="下一个">↓</button><button id="terminal-search-close" type="button" title="关闭">×</button></div>
               </div>
-              <button id="copy-file-path" class="icon-button text-button" disabled>复制路径</button>
             </div>
-            <div id="preview-path" class="preview-path"></div>
-            <div id="file-preview" class="file-preview empty-preview">
-              <div class="preview-empty-icon">⌘</div>
-              <strong>选择一个文件</strong>
-              <span>文本、常见图片和 PDF 可以直接预览。</span>
+          </div>
+          <div id="output-panel-view" class="panel-view hidden">
+            <div class="output-shell">
+              <div class="output-header"><div class="output-header-left"><span class="output-title">HARNESS OUTPUT</span><span id="log-title" class="output-context">选择一个实例查看日志</span></div><div class="output-actions"><button id="copy-logs" class="icon-button text-button" disabled>复制日志</button></div></div>
+              <pre id="log-view"><span class="log-placeholder">Harness / SSH / Usage 日志会显示在这里。</span></pre>
             </div>
-          </aside>
+          </div>
         </div>
       </section>
-    </section>
+    </div>
+  </div>
 
-    <footer class="footer-note">
-      <span>Official DeepSeek Harness can run locally or on the selected SSH host.</span>
-      <span>余额查询是普通 HTTP 请求，不产生模型 Token。</span>
-    </footer>
-  </main>
+  <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
+  <div id="command-palette-backdrop" class="command-palette-backdrop hidden">
+    <div class="command-palette" role="dialog" aria-modal="true" aria-label="命令面板">
+      <div class="command-input-wrap"><span>›</span><input id="command-input" class="command-input" type="text" autocomplete="off" placeholder="输入命令或工作区操作…"></div>
+      <div id="command-results" class="command-results"></div>
+    </div>
+  </div>
+
+  <script src="/vendor/xterm/lib/xterm.js"></script>
+  <script src="/vendor/xterm-fit/lib/addon-fit.js"></script>
+  <script src="/vendor/xterm-search/lib/addon-search.js"></script>
+  <script src="/vendor/xterm-web-links/lib/addon-web-links.js"></script>
   <script src="/network-options.js"></script>
   <script type="module" src="/app.js"></script>
   <script type="module" src="/pdf-preview.js"></script>
   <script type="module" src="/workspace-picker.js"></script>
   <script type="module" src="/ui-polish.js"></script>
+  <script type="module" src="/workbench.js"></script>
+  <script type="module" src="/terminal.js"></script>
 </body>
 </html>
