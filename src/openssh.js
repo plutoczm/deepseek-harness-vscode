@@ -144,6 +144,68 @@ export async function probeSshBaseline(alias, timeoutMs = 8_000) {
   return { ok: result.success, ...result };
 }
 
+/**
+ * Probe SSH transport, remote-direct GitHub and an optional reverse-proxy port
+ * inside ONE authenticated SSH session. This matters on Windows corporate VPN
+ * stacks (notably aTrust VNIC), where several back-to-back new SSH handshakes
+ * can be reset during banner/KEX even though a standalone ssh command works.
+ *
+ * The remote script always exits 0 after it starts, so exitCode=0 proves the SSH
+ * baseline independently from whether GitHub/direct/proxy connectivity works.
+ */
+export async function probeRemoteRoute(alias, {
+  includeDirect = true,
+  proxyPort,
+  timeoutMs = 8_000,
+} = {}) {
+  const proxy = Number(proxyPort) > 0 ? `http://127.0.0.1:${Number(proxyPort)}` : '';
+  const lines = [
+    'dsh_probe_url() {',
+    '  dsh_proxy="$1"',
+    '  if command -v curl >/dev/null 2>&1; then',
+    '    if [ -n "$dsh_proxy" ]; then',
+    '      curl -fsSI -x "$dsh_proxy" --connect-timeout 5 --max-time 8 https://github.com >/dev/null 2>&1',
+    '    else',
+    '      curl -fsSI --noproxy "*" --connect-timeout 5 --max-time 8 https://github.com >/dev/null 2>&1',
+    '    fi',
+    '  elif command -v git >/dev/null 2>&1; then',
+    '    if [ -n "$dsh_proxy" ]; then',
+    '      HTTPS_PROXY="$dsh_proxy" HTTP_PROXY="$dsh_proxy" ALL_PROXY="$dsh_proxy" https_proxy="$dsh_proxy" http_proxy="$dsh_proxy" all_proxy="$dsh_proxy" GIT_TERMINAL_PROMPT=0 git -c http.proxy="$dsh_proxy" ls-remote https://github.com/git/git.git HEAD >/dev/null 2>&1',
+    '    else',
+    '      HTTPS_PROXY= HTTP_PROXY= ALL_PROXY= https_proxy= http_proxy= all_proxy= GIT_TERMINAL_PROMPT=0 git -c http.proxy= ls-remote https://github.com/git/git.git HEAD >/dev/null 2>&1',
+    '    fi',
+    '  else',
+    '    return 127',
+    '  fi',
+    '}',
+  ];
+
+  if (includeDirect) {
+    lines.push("if dsh_probe_url ''; then printf 'DSH_DIRECT=1\\n'; else printf 'DSH_DIRECT=0\\n'; fi");
+  } else {
+    lines.push("printf 'DSH_DIRECT=SKIP\\n'");
+  }
+  if (proxy) {
+    lines.push(`if dsh_probe_url ${shellQuote(proxy)}; then printf 'DSH_PROXY=1\\n'; else printf 'DSH_PROXY=0\\n'; fi`);
+  } else {
+    lines.push("printf 'DSH_PROXY=SKIP\\n'");
+  }
+  lines.push("printf 'DSH_SSH=1\\n'", 'exit 0');
+
+  const result = await runRemoteCommand(alias, lines.join('\n'), {
+    timeoutMs: timeoutMs + 12_000,
+    maxBytes: 256 * 1024,
+  });
+  const sshOk = result.success && /(?:^|\n)DSH_SSH=1(?:\n|$)/u.test(result.stdout);
+  return {
+    ok: sshOk,
+    sshOk,
+    directOk: sshOk && /(?:^|\n)DSH_DIRECT=1(?:\n|$)/u.test(result.stdout),
+    proxyOk: sshOk && /(?:^|\n)DSH_PROXY=1(?:\n|$)/u.test(result.stdout),
+    ...result,
+  };
+}
+
 export async function probeRemoteGitHub(alias, timeoutMs = 8_000) {
   const script = [
     'if command -v curl >/dev/null 2>&1; then',

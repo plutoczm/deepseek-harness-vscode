@@ -2,6 +2,7 @@ import net from 'node:net';
 import {
   probeRemoteGitHub,
   probeRemoteProxy,
+  probeRemoteRoute,
   probeSshBaseline,
   resolveOpenSshConfig,
   startConfiguredTunnel,
@@ -62,20 +63,51 @@ function sshTransportSucceeded(result) {
   );
 }
 
+/** Compatibility adapter for unit tests and third-party injected probes. */
+function legacyRouteProbe(adapters) {
+  return async (alias, { includeDirect = true, proxyPort, timeoutMs = 8_000 } = {}) => {
+    const direct = includeDirect
+      ? await adapters.probeDirect(alias, timeoutMs)
+      : undefined;
+    const proxy = Number(proxyPort) > 0
+      ? await adapters.probeProxy(alias, Number(proxyPort), timeoutMs)
+      : undefined;
+    const hint = proxy || direct;
+
+    let sshOk = Boolean(hint?.ok || sshTransportSucceeded(hint));
+    let baseline = hint;
+    if (!sshOk) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (attempt > 0 || hint) await adapters.delay(attempt === 0 ? 750 : 1200);
+        baseline = await adapters.probeSsh(alias, timeoutMs);
+        if (baseline?.ok) {
+          sshOk = true;
+          break;
+        }
+      }
+    }
+
+    return {
+      ...(baseline || {}),
+      ok: sshOk,
+      sshOk,
+      directOk: Boolean(direct?.ok),
+      proxyOk: Boolean(proxy?.ok),
+    };
+  };
+}
+
 /**
  * Network policy for one or more native OpenSSH aliases.
  *
- * Priority in auto mode:
- * 1. remote GitHub direct;
- * 2. a healthy reverse tunnel already owned by this RouteManager;
- * 3. an already-live external RemoteForward from `ssh -G`;
- * 4. reuse the external-forward probe as SSH transport evidence when possible;
- * 5. otherwise perform a small, backoff-limited authenticated SSH baseline;
- * 6. start exactly one configured-forward owner when a matching RemoteForward
- *    exists, otherwise create a verified reverse-forward candidate at 17890+.
+ * On the real Windows+aTrust target, opening several SSH sessions back-to-back
+ * can cause banner/KEX resets even though a standalone ssh command succeeds.
+ * Production therefore performs direct GitHub, configured RemoteForward and
+ * authenticated SSH-baseline checks in one remote shell via probeRemoteRoute.
+ * A failed transport gets only one delayed retry.
  *
- * Ordinary SSH exec/probe calls are made with ClearAllForwardings=yes by
- * openssh.js, so they never fight VS Code for the configured listen port.
+ * Ordinary SSH exec/probe calls use ClearAllForwardings=yes, so they never
+ * recreate configured RemoteForward entries or fight VS Code for port 35052.
  */
 export class RouteManager {
   constructor(ctx, inputConfig = {}, adapters = {}) {
@@ -85,7 +117,8 @@ export class RouteManager {
     this.states = new Map();
     this.timer = undefined;
     this.stopped = false;
-    this.adapters = {
+
+    const merged = {
       resolve: resolveOpenSshConfig,
       probeDirect: probeRemoteGitHub,
       probeProxy: probeRemoteProxy,
@@ -96,6 +129,12 @@ export class RouteManager {
       delay,
       ...adapters,
     };
+    const hasLegacyProbeOverrides = !adapters.probeRoute
+      && ['probeDirect', 'probeProxy', 'probeSsh'].some((key) => Object.prototype.hasOwnProperty.call(adapters, key));
+    merged.probeRoute = adapters.probeRoute
+      || (hasLegacyProbeOverrides ? legacyRouteProbe(merged) : probeRemoteRoute);
+    this.routeProbeAttempts = hasLegacyProbeOverrides ? 1 : 2;
+    this.adapters = merged;
   }
 
   log(message) {
@@ -167,18 +206,14 @@ export class RouteManager {
     return state.checking;
   }
 
-  async verifySshBaseline(alias, probeHint) {
-    if (sshTransportSucceeded(probeHint)) {
-      return { ok: true, reusedProbe: true, exitCode: probeHint.exitCode };
+  async probeRouteWithBackoff(alias, options) {
+    let last;
+    for (let attempt = 0; attempt < this.routeProbeAttempts; attempt += 1) {
+      if (attempt > 0) await this.adapters.delay(1200);
+      last = await this.adapters.probeRoute(alias, options);
+      if (last?.sshOk) return last;
     }
-
-    let last = probeHint;
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      if (attempt > 0 || probeHint) await this.adapters.delay(attempt === 0 ? 750 : 1200);
-      last = await this.adapters.probeSsh(alias, this.config.probeTimeoutMs);
-      if (last?.ok) return last;
-    }
-    return last || { ok: false, error: 'authenticated SSH exec failed' };
+    return last || { ok: false, sshOk: false, error: 'authenticated SSH route probe failed' };
   }
 
   async evaluate(alias, state) {
@@ -207,53 +242,62 @@ export class RouteManager {
       return state;
     }
 
-    const directPromise = this.mode === 'auto'
-      ? this.adapters.probeDirect(alias, this.config.probeTimeoutMs)
-      : Promise.resolve({ ok: false });
-    const localPromise = this.adapters.probeLocal(this.config.localProxyHost, this.config.localProxyPort);
-    const [direct, local] = await Promise.all([directPromise, localPromise]);
-    state.directOk = Boolean(direct?.ok);
+    const configured = state.configuredForward;
+    const managedAlive = childAlive(state.tunnel) && Number(state.remotePort) > 0;
+    const probePort = managedAlive
+      ? state.remotePort
+      : configured?.listenPort;
+
+    const [remote, local] = await Promise.all([
+      this.probeRouteWithBackoff(alias, {
+        includeDirect: this.mode === 'auto',
+        proxyPort: probePort,
+        timeoutMs: this.config.probeTimeoutMs,
+      }),
+      this.adapters.probeLocal(this.config.localProxyHost, this.config.localProxyPort),
+    ]);
+
+    state.directOk = Boolean(remote?.directOk);
+    state.sshOk = Boolean(remote?.sshOk);
     state.localProxyOk = Boolean(local?.ok);
     state.localProxyDetail = local?.detail;
 
-    if (this.mode === 'auto' && direct?.ok) {
+    if (state.sshOk && this.mode === 'auto' && remote?.directOk) {
       this.stopManagedTunnel(state);
       state.route = 'direct';
       state.source = 'remote-direct';
       state.remotePort = undefined;
-      state.sshOk = true;
+      state.error = undefined;
       this.log(`${alias}: GitHub direct is healthy; using the server network.`);
       return state;
     }
 
-    if (childAlive(state.tunnel) && state.remotePort) {
-      const healthy = await this.adapters.probeProxy(alias, state.remotePort, this.config.probeTimeoutMs);
-      if (healthy?.ok) {
-        state.route = 'proxy';
-        state.source = state.tunnelSource || 'managed';
-        state.sshOk = true;
-        state.error = undefined;
-        return state;
+    if (state.sshOk && probePort && remote?.proxyOk) {
+      state.route = 'proxy';
+      state.source = managedAlive
+        ? (state.tunnelSource || 'managed')
+        : 'existing-config-forward';
+      state.remotePort = Number(probePort);
+      state.localProxyOk = true;
+      state.error = undefined;
+      if (!managedAlive) {
+        this.log(`${alias}: reusing existing RemoteForward 127.0.0.1:${probePort} -> ${this.config.localProxyHost}:${this.config.localProxyPort}.`);
       }
-      this.stopManagedTunnel(state);
+      return state;
     }
 
-    const configured = state.configuredForward;
-    let configuredProbe;
-    if (configured) {
-      configuredProbe = await this.adapters.probeProxy(alias, configured.listenPort, this.config.probeTimeoutMs);
-      if (configuredProbe?.ok) {
-        state.route = 'proxy';
-        state.source = 'existing-config-forward';
-        state.remotePort = configured.listenPort;
-        state.sshOk = true;
-        this.log(`${alias}: reusing existing RemoteForward 127.0.0.1:${configured.listenPort} -> ${this.config.localProxyHost}:${this.config.localProxyPort}.`);
-        return state;
-      }
+    // A transient control-SSH health probe must not kill an already-running
+    // managed tunnel. Keep ownership and retry on the next health cycle.
+    if (managedAlive && !state.sshOk) {
+      state.route = 'proxy';
+      state.source = state.tunnelSource || 'managed';
+      state.error = `SSH health probe unavailable; keeping live managed tunnel: ${resultError(remote, 'transport failed')}`;
+      return state;
     }
+
+    if (managedAlive) this.stopManagedTunnel(state);
 
     if (!local?.ok) {
-      this.stopManagedTunnel(state);
       state.route = 'unavailable';
       state.source = 'local-proxy-unavailable';
       state.remotePort = undefined;
@@ -262,21 +306,18 @@ export class RouteManager {
       return state;
     }
 
-    // When the remote proxy command ran and merely reported that 35052 is not
-    // listening (exit != 255), the SSH transport is already proven. Reuse that
-    // evidence instead of immediately opening a second SSH connection. If the
-    // transport itself failed, retry only twice with backoff to tolerate aTrust
-    // / corporate VNIC banner-reset bursts without hammering the SSH endpoint.
-    const baseline = await this.verifySshBaseline(alias, configuredProbe);
-    state.sshOk = Boolean(baseline?.ok);
-    if (!baseline?.ok) {
+    if (!state.sshOk) {
       state.route = 'unavailable';
       state.source = 'ssh-unavailable';
       state.remotePort = undefined;
-      state.error = `SSH baseline unavailable: ${resultError(baseline, 'authenticated SSH exec failed')}`;
+      state.error = `SSH baseline unavailable: ${resultError(remote, 'authenticated SSH exec failed')}`;
       this.log(`${alias}: ${state.error}`);
       return state;
     }
+
+    // Give aTrust / corporate VNIC stacks a short quiet period between the
+    // route-probe connection and the long-lived tunnel-owner handshake.
+    await this.adapters.delay(900);
 
     if (configured) {
       const managed = await this.tryConfiguredTunnel(alias, state, configured.listenPort);
@@ -341,6 +382,10 @@ export class RouteManager {
     const timeoutMs = Math.max(2_000, this.config.probeTimeoutMs);
     let lastProbe;
 
+    // Avoid immediately opening another short-lived SSH while the new -N owner
+    // is still completing KEX/authentication.
+    await this.adapters.delay(900);
+
     while (Date.now() - started < timeoutMs) {
       if (!childAlive(state.tunnel)) {
         return {
@@ -351,7 +396,8 @@ export class RouteManager {
 
       lastProbe = await this.adapters.probeProxy(alias, remotePort, Math.min(2_500, timeoutMs));
       if (lastProbe?.ok) return { ok: true };
-      await this.adapters.delay(350);
+      const transportReset = lastProbe?.exitCode === 255;
+      await this.adapters.delay(transportReset ? 1200 : 500);
     }
 
     return {
