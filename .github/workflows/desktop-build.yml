@@ -36,6 +36,9 @@ jobs:
           node -e "import('./src/terminal-manager.mjs').then(({TerminalManager}) => { const manager = new TerminalManager(); const terminal = manager.create({ mode: 'local', cwd: process.cwd(), profile: 'cmd', cols: 80, rows: 20 }); if (!terminal.id || terminal.status !== 'running') throw new Error('PTY did not enter running state'); setTimeout(() => { manager.remove(terminal.id); console.log('PTY_OK'); }, 300); }).catch((error) => { console.error(error); process.exit(1); });"
       - name: Build Windows installer
         run: npm run desktop:win
+      - name: Smoke-test PTY under Electron ABI
+        shell: pwsh
+        run: npx electron test/electron-pty-smoke.cjs
       - name: Verify packaged desktop runtime
         shell: pwsh
         run: |
