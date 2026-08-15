@@ -17,9 +17,9 @@ import {
   proxyEnvironment,
 } from '../src/util.js';
 
-function fakeChild() {
+function fakeChild({ exitCode = null } = {}) {
   const child = new EventEmitter();
-  child.exitCode = null;
+  child.exitCode = exitCode;
   child.stderr = new EventEmitter();
   child.stderr.setEncoding = () => {};
   child.kill = () => {
@@ -84,13 +84,15 @@ test('ordinary OpenSSH operations clear configured forwards', () => {
   assert.equal(args.at(-1), 'gdwyy70');
 });
 
-test('tunnel owner intentionally keeps configured forwards enabled', () => {
+test('managed tunnel owners fail loud on forwarding errors', () => {
   const configured = buildConfiguredTunnelArgs('gdwyy70');
   assert.ok(!configured.includes('ClearAllForwardings=yes'));
+  assert.ok(configured.includes('ExitOnForwardFailure=yes'));
   assert.ok(configured.includes('-N'));
 
   const explicit = buildExplicitTunnelArgs('gdwyy70', 17890, '127.0.0.1', 7890);
   assert.ok(!explicit.includes('ClearAllForwardings=yes'));
+  assert.ok(explicit.includes('ExitOnForwardFailure=yes'));
   assert.ok(explicit.includes('-R'));
   assert.ok(explicit.includes('127.0.0.1:17890:127.0.0.1:7890'));
 });
@@ -122,10 +124,12 @@ test('local HTTP CONNECT proxy probe recognizes a 200 response', async () => {
 
 test('route manager reuses an existing VS Code RemoteForward without spawning a tunnel', async () => {
   let spawned = 0;
+  let baselineProbes = 0;
   const manager = new RouteManager({}, { mode: 'proxy' }, {
     resolve: async () => parseOpenSshConfig(WINDOWS_SSH_G, 'gdwyy70'),
     probeDirect: async () => ({ ok: false }),
     probeLocal: async () => ({ ok: true }),
+    probeSsh: async () => { baselineProbes += 1; return { ok: true }; },
     probeProxy: async (_alias, port) => ({ ok: port === 35052 }),
     startConfiguredTunnel: () => { spawned += 1; return fakeChild(); },
     startExplicitTunnel: () => { spawned += 1; return fakeChild(); },
@@ -137,7 +141,33 @@ test('route manager reuses an existing VS Code RemoteForward without spawning a 
   assert.equal(state.source, 'existing-config-forward');
   assert.equal(state.remotePort, 35052);
   assert.equal(spawned, 0);
+  assert.equal(baselineProbes, 0);
   assert.equal(manager.proxyEnv('gdwyy70').HTTPS_PROXY, 'http://127.0.0.1:35052');
+  await manager.stop();
+});
+
+test('SSH banner/reset failure prevents all managed tunnel spawning', async () => {
+  let configuredStarts = 0;
+  let explicitStarts = 0;
+  const manager = new RouteManager({}, { mode: 'proxy' }, {
+    resolve: async () => parseOpenSshConfig(WINDOWS_SSH_G, 'gdwyy70'),
+    probeLocal: async () => ({ ok: true }),
+    probeProxy: async () => ({ ok: false }),
+    probeSsh: async () => ({
+      ok: false,
+      stderr: 'kex_exchange_identification: read: Connection reset\nConnection reset by 172.23.207.70 port 22',
+    }),
+    startConfiguredTunnel: () => { configuredStarts += 1; return fakeChild(); },
+    startExplicitTunnel: () => { explicitStarts += 1; return fakeChild(); },
+  });
+
+  const state = await manager.ensure('gdwyy70', { force: true });
+  assert.equal(state.route, 'unavailable');
+  assert.equal(state.source, 'ssh-unavailable');
+  assert.equal(state.sshOk, false);
+  assert.match(state.error, /Connection reset by 172\.23\.207\.70/u);
+  assert.equal(configuredStarts, 0);
+  assert.equal(explicitStarts, 0);
   await manager.stop();
 });
 
@@ -148,6 +178,7 @@ test('route manager owns the configured forward only when the external 35052 tun
   const manager = new RouteManager({}, { mode: 'proxy' }, {
     resolve: async () => parseOpenSshConfig(WINDOWS_SSH_G, 'gdwyy70'),
     probeLocal: async () => ({ ok: true }),
+    probeSsh: async () => ({ ok: true }),
     probeProxy: async (_alias, port) => {
       assert.equal(port, 35052);
       probes += 1;
@@ -174,6 +205,7 @@ test('managed configured forward waits for a real OpenSSH handshake instead of f
   const manager = new RouteManager({}, { mode: 'proxy', probeTimeoutMs: 8000 }, {
     resolve: async () => parseOpenSshConfig(WINDOWS_SSH_G, 'gdwyy70'),
     probeLocal: async () => ({ ok: true, detail: 'HTTP/1.1 200 Connection established' }),
+    probeSsh: async () => ({ ok: true }),
     probeProxy: async (_alias, port) => {
       assert.equal(port, 35052);
       probes += 1;
@@ -196,12 +228,62 @@ test('managed configured forward waits for a real OpenSSH handshake instead of f
   await manager.stop();
 });
 
+test('configured forward bind race reuses the winner instead of opening 17890', async () => {
+  let probes = 0;
+  let explicitStarts = 0;
+  const failedChild = fakeChild({ exitCode: 255 });
+  const manager = new RouteManager({}, { mode: 'proxy' }, {
+    resolve: async () => parseOpenSshConfig(WINDOWS_SSH_G, 'gdwyy70'),
+    probeLocal: async () => ({ ok: true }),
+    probeSsh: async () => ({ ok: true }),
+    probeProxy: async (_alias, port) => {
+      assert.equal(port, 35052);
+      probes += 1;
+      // Initial external probe fails; configured child loses the race and
+      // exits; the post-race re-probe sees the other process's live 35052.
+      return { ok: probes >= 2 };
+    },
+    startConfiguredTunnel: () => failedChild,
+    startExplicitTunnel: () => { explicitStarts += 1; return fakeChild(); },
+    delay: async () => {},
+  });
+
+  const state = await manager.ensure('gdwyy70', { force: true });
+  assert.equal(state.route, 'proxy');
+  assert.equal(state.source, 'existing-config-forward');
+  assert.equal(state.remotePort, 35052);
+  assert.equal(explicitStarts, 0);
+  await manager.stop();
+});
+
+test('matching configured RemoteForward failure never silently switches to 17890', async () => {
+  let explicitStarts = 0;
+  const failedChild = fakeChild({ exitCode: 255 });
+  const manager = new RouteManager({}, { mode: 'proxy' }, {
+    resolve: async () => parseOpenSshConfig(WINDOWS_SSH_G, 'gdwyy70'),
+    probeLocal: async () => ({ ok: true }),
+    probeSsh: async () => ({ ok: true }),
+    probeProxy: async () => ({ ok: false }),
+    startConfiguredTunnel: () => failedChild,
+    startExplicitTunnel: () => { explicitStarts += 1; return fakeChild(); },
+    delay: async () => {},
+  });
+
+  const state = await manager.ensure('gdwyy70', { force: true });
+  assert.equal(state.route, 'unavailable');
+  assert.equal(state.source, 'configured-forward-unavailable');
+  assert.equal(explicitStarts, 0);
+  assert.match(state.error, /Configured RemoteForward 35052 failed/u);
+  await manager.stop();
+});
+
 test('route manager falls back to an independent 17890+ reverse tunnel when no matching RemoteForward exists', async () => {
   const resolved = parseOpenSshConfig('user czm2025\nhostname 172.23.207.70\nport 22\n', 'gdwyy70');
   let explicitPort;
   const manager = new RouteManager({}, { mode: 'proxy', remotePortStart: 17890 }, {
     resolve: async () => resolved,
     probeLocal: async () => ({ ok: true }),
+    probeSsh: async () => ({ ok: true }),
     probeProxy: async (_alias, port) => ({ ok: port === 17890 }),
     startConfiguredTunnel: () => { throw new Error('no configured tunnel expected'); },
     startExplicitTunnel: (_alias, port) => { explicitPort = port; return fakeChild(); },
