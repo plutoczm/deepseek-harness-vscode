@@ -52,6 +52,16 @@ function isManagedSource(source) {
   return typeof source === 'string' && source.startsWith('managed-');
 }
 
+function sshTransportSucceeded(result) {
+  return Boolean(
+    result
+    && result.timedOut !== true
+    && result.exitCode !== null
+    && result.exitCode !== undefined
+    && result.exitCode !== 255,
+  );
+}
+
 /**
  * Network policy for one or more native OpenSSH aliases.
  *
@@ -59,8 +69,9 @@ function isManagedSource(source) {
  * 1. remote GitHub direct;
  * 2. a healthy reverse tunnel already owned by this RouteManager;
  * 3. an already-live external RemoteForward from `ssh -G`;
- * 4. verify that a fresh authenticated SSH exec still works;
- * 5. start exactly one configured-forward owner when a matching RemoteForward
+ * 4. reuse the external-forward probe as SSH transport evidence when possible;
+ * 5. otherwise perform a small, backoff-limited authenticated SSH baseline;
+ * 6. start exactly one configured-forward owner when a matching RemoteForward
  *    exists, otherwise create a verified reverse-forward candidate at 17890+.
  *
  * Ordinary SSH exec/probe calls are made with ClearAllForwardings=yes by
@@ -156,6 +167,20 @@ export class RouteManager {
     return state.checking;
   }
 
+  async verifySshBaseline(alias, probeHint) {
+    if (sshTransportSucceeded(probeHint)) {
+      return { ok: true, reusedProbe: true, exitCode: probeHint.exitCode };
+    }
+
+    let last = probeHint;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (attempt > 0 || probeHint) await this.adapters.delay(attempt === 0 ? 750 : 1200);
+      last = await this.adapters.probeSsh(alias, this.config.probeTimeoutMs);
+      if (last?.ok) return last;
+    }
+    return last || { ok: false, error: 'authenticated SSH exec failed' };
+  }
+
   async evaluate(alias, state) {
     state.error = undefined;
     state.lastCheckedAt = Date.now();
@@ -201,10 +226,6 @@ export class RouteManager {
       return state;
     }
 
-    // A tunnel owned by this RouteManager must be checked before probing for an
-    // "external" configured forward. Otherwise our own 35052 looks external,
-    // gets classified as existing-config-forward, and stopManagedTunnel() kills
-    // the very tunnel that made the probe succeed.
     if (childAlive(state.tunnel) && state.remotePort) {
       const healthy = await this.adapters.probeProxy(alias, state.remotePort, this.config.probeTimeoutMs);
       if (healthy?.ok) {
@@ -217,12 +238,11 @@ export class RouteManager {
       this.stopManagedTunnel(state);
     }
 
-    // If an external process (for example VS Code Remote SSH) already owns the
-    // configured RemoteForward and it works end-to-end, that is authoritative.
     const configured = state.configuredForward;
+    let configuredProbe;
     if (configured) {
-      const existingProxy = await this.adapters.probeProxy(alias, configured.listenPort, this.config.probeTimeoutMs);
-      if (existingProxy?.ok) {
+      configuredProbe = await this.adapters.probeProxy(alias, configured.listenPort, this.config.probeTimeoutMs);
+      if (configuredProbe?.ok) {
         state.route = 'proxy';
         state.source = 'existing-config-forward';
         state.remotePort = configured.listenPort;
@@ -242,9 +262,12 @@ export class RouteManager {
       return state;
     }
 
-    // Never hammer candidate reverse-forward ports when the base SSH transport
-    // itself is failing (e.g. TCP/banner reset through a corporate VNIC).
-    const baseline = await this.adapters.probeSsh(alias, this.config.probeTimeoutMs);
+    // When the remote proxy command ran and merely reported that 35052 is not
+    // listening (exit != 255), the SSH transport is already proven. Reuse that
+    // evidence instead of immediately opening a second SSH connection. If the
+    // transport itself failed, retry only twice with backoff to tolerate aTrust
+    // / corporate VNIC banner-reset bursts without hammering the SSH endpoint.
+    const baseline = await this.verifySshBaseline(alias, configuredProbe);
     state.sshOk = Boolean(baseline?.ok);
     if (!baseline?.ok) {
       state.route = 'unavailable';
@@ -259,9 +282,6 @@ export class RouteManager {
       const managed = await this.tryConfiguredTunnel(alias, state, configured.listenPort);
       if (managed) return state;
 
-      // A second Harness/VS Code process may have won the bind race after our
-      // initial external probe. Re-probe once and reuse the winner rather than
-      // opening a second, unrelated fallback port.
       const raced = await this.adapters.probeProxy(alias, configured.listenPort, this.config.probeTimeoutMs);
       if (raced?.ok) {
         this.stopManagedTunnel(state);
@@ -272,9 +292,6 @@ export class RouteManager {
         return state;
       }
 
-      // A matching explicit OpenSSH RemoteForward is authoritative. If it
-      // cannot be owned, fail with its exact diagnostics rather than silently
-      // moving to 17890 and creating a second proxy convention for this host.
       state.route = 'unavailable';
       state.source = 'configured-forward-unavailable';
       state.remotePort = undefined;
