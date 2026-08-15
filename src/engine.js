@@ -107,7 +107,9 @@ export class OpenSshEngine {
       source: state?.source,
       remotePort: state?.remotePort,
       directOk: state?.directOk,
+      sshOk: state?.sshOk,
       localProxyOk: state?.localProxyOk,
+      localProxyDetail: state?.localProxyDetail,
       error: state?.error,
       resolved,
     };
