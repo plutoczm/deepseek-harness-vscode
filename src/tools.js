@@ -122,7 +122,7 @@ export function openSshExecTool(engine) {
 export function openSshProxyStatusTool(engine) {
   return defineTool({
     name: 'openssh_proxy_status',
-    description: 'Inspect or refresh the SSH/VPN route for one alias. Reports whether GitHub is remote-direct, reusing an existing OpenSSH RemoteForward (such as VS Code 35052->Windows 7890), or using a Harness-managed fallback reverse tunnel.',
+    description: 'Inspect or refresh the SSH/VPN route for one alias. Reports whether GitHub is remote-direct, reusing an existing OpenSSH RemoteForward (such as VS Code 35052->Windows 7890), using a Harness-managed tunnel, or blocked at the base SSH transport.',
     parameters: {
       alias: { type: 'string', required: true, description: 'OpenSSH Host alias or target.' },
       refresh: { type: 'boolean', description: 'Re-probe the route now; default true.' },
@@ -139,6 +139,7 @@ export function openSshProxyStatusTool(engine) {
           source: { type: 'string' },
           remotePort: { type: 'integer' },
           directOk: { type: 'boolean' },
+          sshOk: { type: 'boolean' },
           localProxyOk: { type: 'boolean' },
           localProxyDetail: { type: 'string' },
           hostname: { type: 'string', required: true },
@@ -151,7 +152,7 @@ export function openSshProxyStatusTool(engine) {
       render: (_args, value) => text([
         `${value.alias} -> ${value.user ? `${value.user}@` : ''}${value.hostname}:${value.port}`,
         `mode=${value.mode} route=${value.route}${value.source ? ` source=${value.source}` : ''}`,
-        `localProxy=${value.localProxy} localProxyOk=${String(value.localProxyOk ?? 'unknown')}${value.localProxyDetail ? ` (${value.localProxyDetail})` : ''}`,
+        `sshOk=${String(value.sshOk ?? 'unknown')} localProxy=${value.localProxy} localProxyOk=${String(value.localProxyOk ?? 'unknown')}${value.localProxyDetail ? ` (${value.localProxyDetail})` : ''}`,
         `configuredRemotePort=${value.configuredRemotePort ?? 'none'}${value.remotePort ? ` activeRemoteProxy=127.0.0.1:${value.remotePort}` : ''}`,
         value.error ? `error=${value.error}` : '',
       ].filter(Boolean).join('\n')),
@@ -167,6 +168,7 @@ export function openSshProxyStatusTool(engine) {
           ...(status.source ? { source: status.source } : {}),
           ...(status.remotePort ? { remotePort: status.remotePort } : {}),
           ...(typeof status.directOk === 'boolean' ? { directOk: status.directOk } : {}),
+          ...(typeof status.sshOk === 'boolean' ? { sshOk: status.sshOk } : {}),
           ...(typeof status.localProxyOk === 'boolean' ? { localProxyOk: status.localProxyOk } : {}),
           ...(status.localProxyDetail ? { localProxyDetail: status.localProxyDetail } : {}),
           hostname: status.resolved.hostname,
