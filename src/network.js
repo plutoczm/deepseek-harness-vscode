@@ -1,43 +1,12 @@
-import { spawn } from 'node:child_process';
 import net from 'node:net';
-import { normalizeConfig, parseSshUri, proxyEnvironment } from './util.js';
-
-function processResult(command, args, { timeoutMs = 10_000, maxBytes = 128 * 1024 } = {}) {
-  return new Promise((resolve) => {
-    let stdout = '';
-    let stderr = '';
-    let settled = false;
-    const child = spawn(command, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
-    child.stdout?.setEncoding('utf8');
-    child.stderr?.setEncoding('utf8');
-    child.stdout?.on('data', (chunk) => { stdout = (stdout + chunk).slice(-maxBytes); });
-    child.stderr?.on('data', (chunk) => { stderr = (stderr + chunk).slice(-maxBytes); });
-    const finish = (result) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({ ...result, stdout, stderr });
-    };
-    const timer = setTimeout(() => {
-      child.kill();
-      finish({ code: null, timedOut: true, error: 'timeout' });
-    }, timeoutMs);
-    child.once('error', (error) => finish({ code: null, timedOut: false, error: error.message }));
-    child.once('exit', (code, signal) => finish({ code, signal, timedOut: false }));
-  });
-}
-
-function sshArgs(target, extra = []) {
-  const args = [
-    '-o', 'BatchMode=yes',
-    '-o', 'ConnectTimeout=8',
-    '-o', 'ServerAliveInterval=20',
-    '-o', 'ServerAliveCountMax=3',
-  ];
-  if (target.port !== 22) args.push('-p', String(target.port));
-  args.push(...extra, target.destination);
-  return args;
-}
+import {
+  probeRemoteGitHub,
+  probeRemoteProxy,
+  resolveOpenSshConfig,
+  startConfiguredTunnel,
+  startExplicitTunnel,
+} from './openssh.js';
+import { matchingProxyForward, normalizeConfig, proxyEnvironment } from './util.js';
 
 export function probeLocalHttpProxy(host = '127.0.0.1', port = 7890, timeoutMs = 3500) {
   return new Promise((resolve) => {
@@ -66,91 +35,74 @@ export function probeLocalHttpProxy(host = '127.0.0.1', port = 7890, timeoutMs =
   });
 }
 
-export async function probeRemoteGitHub(uri, timeoutMs = 8_000) {
-  const target = parseSshUri(uri);
-  const script = [
-    "if command -v curl >/dev/null 2>&1; then",
-    "  curl -fsSI --connect-timeout 5 --max-time 8 https://github.com >/dev/null",
-    "elif command -v git >/dev/null 2>&1; then",
-    "  GIT_TERMINAL_PROMPT=0 git ls-remote https://github.com/git/git.git HEAD >/dev/null 2>&1",
-    "else",
-    "  exit 127",
-    "fi",
-  ].join('\n');
-  const result = await processResult('ssh', [...sshArgs(target, ['-T']), '--', `sh -lc ${JSON.stringify(script)}`], { timeoutMs: timeoutMs + 4_000 });
-  return { ok: result.code === 0, ...result };
-}
-
-async function probeRemoteProxy(uri, remotePort, timeoutMs) {
-  const target = parseSshUri(uri);
-  const proxy = `http://127.0.0.1:${remotePort}`;
-  const script = [
-    "if command -v curl >/dev/null 2>&1; then",
-    `  curl -fsSI -x ${proxy} --connect-timeout 5 --max-time 8 https://github.com >/dev/null`,
-    "elif command -v git >/dev/null 2>&1; then",
-    `  HTTPS_PROXY=${proxy} GIT_TERMINAL_PROMPT=0 git ls-remote https://github.com/git/git.git HEAD >/dev/null 2>&1`,
-    "else",
-    "  exit 127",
-    "fi",
-  ].join('\n');
-  const result = await processResult('ssh', [...sshArgs(target, ['-T']), '--', `sh -lc ${JSON.stringify(script)}`], { timeoutMs: timeoutMs + 4_000 });
-  return result.code === 0;
-}
-
-function tunnelProcess(uri, remotePort, config) {
-  const target = parseSshUri(uri);
-  const reverse = `127.0.0.1:${remotePort}:${config.localProxyHost}:${config.localProxyPort}`;
-  const args = sshArgs(target, [
-    '-T', '-N',
-    '-o', 'ExitOnForwardFailure=yes',
-    '-R', reverse,
-  ]);
-  return spawn('ssh', args, { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
-}
-
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function childAlive(child) {
+  return child && child.exitCode === null;
+}
+
+/**
+ * Network policy for one or more native OpenSSH aliases.
+ *
+ * Priority in auto mode:
+ * 1. remote GitHub direct;
+ * 2. an already-live RemoteForward from `ssh -G` (for example VS Code's
+ *    gdwyy70:35052 -> Windows 127.0.0.1:7890);
+ * 3. start a dedicated SSH process that realizes that configured forward;
+ * 4. create our own reverse-forward candidate at 17890+.
+ *
+ * Ordinary SSH exec/probe calls are made with ClearAllForwardings=yes by
+ * openssh.js, so they never fight VS Code for the configured listen port.
+ */
 export class RouteManager {
-  constructor(ctx, inputConfig = {}) {
+  constructor(ctx, inputConfig = {}, adapters = {}) {
     this.ctx = ctx;
     this.config = normalizeConfig(inputConfig);
     this.mode = this.config.mode;
     this.states = new Map();
-    this.unsubscribe = undefined;
     this.timer = undefined;
     this.stopped = false;
+    this.adapters = {
+      resolve: resolveOpenSshConfig,
+      probeDirect: probeRemoteGitHub,
+      probeProxy: probeRemoteProxy,
+      probeLocal: probeLocalHttpProxy,
+      startConfiguredTunnel,
+      startExplicitTunnel,
+      delay,
+      ...adapters,
+    };
   }
 
   log(message) {
-    const logger = typeof this.ctx?.logger === 'function' ? this.ctx.logger('ssh-vpn-bridge') : undefined;
+    const logger = typeof this.ctx?.logger === 'function' ? this.ctx.logger('dsh-openssh-vpn') : undefined;
     if (logger?.info) logger.info(message);
-    else console.log(`[ssh-vpn-bridge] ${message}`);
+    else console.log(`[dsh-openssh-vpn] ${message}`);
   }
 
-  key(uri) {
-    const target = parseSshUri(uri);
-    return `${target.destination}:${target.port}`;
+  state(alias) {
+    return this.states.get(String(alias));
   }
 
-  state(uri) {
-    return this.states.get(this.key(uri));
-  }
-
-  proxyEnv(uri) {
-    const state = this.state(uri);
-    if (!state || state.route !== 'proxy' || !state.remotePort || !state.tunnel || state.tunnel.exitCode !== null) return undefined;
+  proxyEnv(alias) {
+    const state = this.state(alias);
+    if (!state || state.route !== 'proxy' || !state.remotePort) return undefined;
     return proxyEnvironment(state.remotePort, this.config);
   }
 
-  snapshot() {
-    return [...this.states.values()].map((state) => ({
+  snapshot(alias) {
+    const values = alias ? [this.state(alias)].filter(Boolean) : [...this.states.values()];
+    return values.map((state) => ({
+      alias: state.alias,
       target: state.target,
       route: state.route,
+      source: state.source,
       remotePort: state.remotePort,
       directOk: state.directOk,
       localProxyOk: state.localProxyOk,
+      configuredForward: state.configuredForward,
       lastCheckedAt: state.lastCheckedAt,
       error: state.error,
     }));
@@ -162,155 +114,204 @@ export class RouteManager {
     this.mode = next;
   }
 
-  trackedUris() {
-    const uris = new Set();
-    for (const workspace of this.ctx.sshRemote.list()) {
-      if (workspace?.uri && workspace.status === 'connected') uris.add(workspace.uri);
-    }
-    // dsh-ssh-remote keeps persisted native-workspace mappings in an ordinary
-    // runtime Map. The dependency is pinned, so reading this internal map lets
-    // us preflight workspaces restored after a Harness restart before the first
-    // model Bash process needs GitHub.
-    const anchors = this.ctx.sshRemote.anchors;
-    if (anchors && typeof anchors.values === 'function') {
-      for (const anchor of anchors.values()) {
-        if (anchor?.uri) uris.add(anchor.uri);
-      }
-    }
-    return [...uris];
-  }
-
-  async start() {
-    this.unsubscribe = this.ctx.sshRemote.onStatus((change) => {
-      if (change.status !== 'connected') return;
-      const workspace = this.ctx.sshRemote.get(change.workspaceId);
-      if (workspace?.uri) void this.ensure(workspace.uri, { force: true });
-    });
-
-    for (const uri of this.trackedUris()) void this.ensure(uri, { force: true });
-
+  start() {
+    if (this.timer) return;
     this.timer = setInterval(() => {
-      for (const uri of this.trackedUris()) {
-        const state = this.state(uri);
-        // Do not tear down a working proxy route underneath a long-lived shell
-        // merely because direct GitHub recovered. Proxy routes re-evaluate if
-        // their tunnel exits; direct/unavailable routes are refreshed normally.
-        if (!state || state.route === 'direct' || state.route === 'unavailable') void this.ensure(uri, { force: true });
-      }
+      for (const alias of this.states.keys()) void this.ensure(alias, { force: true });
     }, this.config.healthIntervalMs);
     this.timer.unref?.();
   }
 
-  async ensure(uri, { force = false } = {}) {
+  async ensure(alias, { force = false } = {}) {
     if (this.stopped) return undefined;
-    const key = this.key(uri);
+    const key = String(alias || '').trim();
+    if (!key) throw new Error('SSH alias is required');
     const existing = this.states.get(key);
     if (existing?.checking) return existing.checking;
     if (!force && existing && Date.now() - (existing.lastCheckedAt || 0) < 15_000) return existing;
 
-    const target = parseSshUri(uri);
-    const state = existing || { target: `${target.destination}:${target.port}`, route: 'checking' };
+    const state = existing || { alias: key, route: 'checking' };
     this.states.set(key, state);
-    state.checking = this.evaluate(uri, state).finally(() => { state.checking = undefined; });
+    state.checking = this.evaluate(key, state).finally(() => { state.checking = undefined; });
     return state.checking;
   }
 
-  async evaluate(uri, state) {
+  async evaluate(alias, state) {
     state.error = undefined;
     state.lastCheckedAt = Date.now();
 
+    let resolved;
+    try {
+      resolved = await this.adapters.resolve(alias, this.config.probeTimeoutMs);
+      state.target = `${resolved.user ? `${resolved.user}@` : ''}${resolved.hostname}:${resolved.port}`;
+      state.configuredForward = matchingProxyForward(resolved, this.config);
+    } catch (error) {
+      this.stopManagedTunnel(state);
+      state.route = 'unavailable';
+      state.error = error instanceof Error ? error.message : String(error);
+      return state;
+    }
+
     if (this.mode === 'direct') {
-      this.stopTunnel(state);
+      this.stopManagedTunnel(state);
       state.route = 'direct';
+      state.source = 'forced-direct';
       state.directOk = true;
       return state;
     }
 
-    const directPromise = this.mode === 'auto' ? probeRemoteGitHub(uri, this.config.probeTimeoutMs) : Promise.resolve({ ok: false });
-    const localPromise = probeLocalHttpProxy(this.config.localProxyHost, this.config.localProxyPort);
+    const directPromise = this.mode === 'auto'
+      ? this.adapters.probeDirect(alias, this.config.probeTimeoutMs)
+      : Promise.resolve({ ok: false });
+    const localPromise = this.adapters.probeLocal(this.config.localProxyHost, this.config.localProxyPort);
     const [direct, local] = await Promise.all([directPromise, localPromise]);
-    state.directOk = Boolean(direct.ok);
-    state.localProxyOk = Boolean(local.ok);
+    state.directOk = Boolean(direct?.ok);
+    state.localProxyOk = Boolean(local?.ok);
 
-    if (this.mode === 'auto' && direct.ok) {
-      this.stopTunnel(state);
+    if (this.mode === 'auto' && direct?.ok) {
+      this.stopManagedTunnel(state);
       state.route = 'direct';
-      this.log(`${state.target}: GitHub direct is healthy; using server network.`);
+      state.source = 'remote-direct';
+      state.remotePort = undefined;
+      this.log(`${alias}: GitHub direct is healthy; using the server network.`);
       return state;
     }
 
-    if (!local.ok) {
-      this.stopTunnel(state);
+    if (!local?.ok) {
+      this.stopManagedTunnel(state);
       state.route = 'unavailable';
-      state.error = `Local proxy ${this.config.localProxyHost}:${this.config.localProxyPort} unavailable (${local.detail || 'probe failed'})`;
-      this.log(`${state.target}: ${state.error}`);
+      state.source = undefined;
+      state.remotePort = undefined;
+      state.error = `Local proxy ${this.config.localProxyHost}:${this.config.localProxyPort} unavailable (${local?.detail || 'probe failed'})`;
+      this.log(`${alias}: ${state.error}`);
       return state;
     }
 
-    const tunnel = await this.ensureTunnel(uri, state);
-    if (!tunnel) {
-      state.route = 'unavailable';
-      state.error ||= 'Could not establish a working SSH reverse proxy tunnel.';
-      return state;
+    // A tunnel process we own may already be healthy. Reuse it first.
+    if (childAlive(state.tunnel) && state.remotePort) {
+      const healthy = await this.adapters.probeProxy(alias, state.remotePort, this.config.probeTimeoutMs);
+      if (healthy?.ok) {
+        state.route = 'proxy';
+        state.source = state.tunnelSource || 'managed';
+        return state;
+      }
+      this.stopManagedTunnel(state);
     }
-    state.route = 'proxy';
-    this.log(`${state.target}: remote tools will use Windows ${this.config.localProxyHost}:${this.config.localProxyPort} through 127.0.0.1:${state.remotePort}.`);
+
+    const configured = state.configuredForward;
+    if (configured) {
+      // This is the VS Code case: 35052 may already be owned by an external
+      // SSH connection. Never attempt to bind it until we first prove it is
+      // absent, and never kill an external tunnel.
+      const existingProxy = await this.adapters.probeProxy(alias, configured.listenPort, this.config.probeTimeoutMs);
+      if (existingProxy?.ok) {
+        state.route = 'proxy';
+        state.source = 'existing-config-forward';
+        state.remotePort = configured.listenPort;
+        this.log(`${alias}: reusing existing RemoteForward 127.0.0.1:${configured.listenPort} -> ${this.config.localProxyHost}:${this.config.localProxyPort}.`);
+        return state;
+      }
+
+      const managed = await this.tryConfiguredTunnel(alias, state, configured.listenPort);
+      if (managed) return state;
+    }
+
+    const explicit = await this.tryExplicitTunnel(alias, state);
+    if (explicit) return state;
+
+    state.route = 'unavailable';
+    state.source = undefined;
+    state.remotePort = undefined;
+    state.error ||= 'Could not establish a working SSH reverse proxy tunnel.';
     return state;
   }
 
-  async ensureTunnel(uri, state) {
-    if (state.tunnel && state.tunnel.exitCode === null && state.remotePort) return state.tunnel;
-    this.stopTunnel(state);
-
-    for (let offset = 0; offset < 20; offset += 1) {
-      const remotePort = this.config.remotePortStart + offset;
-      const child = tunnelProcess(uri, remotePort, this.config);
-      let stderr = '';
-      child.stderr?.setEncoding('utf8');
-      child.stderr?.on('data', (chunk) => { stderr = (stderr + chunk).slice(-4096); });
-      await delay(650);
-      if (child.exitCode !== null) continue;
-      const working = await probeRemoteProxy(uri, remotePort, this.config.probeTimeoutMs);
-      if (!working) {
-        child.kill();
-        continue;
+  attachTunnel(state, child, source, remotePort) {
+    let stderr = '';
+    child.stderr?.setEncoding?.('utf8');
+    child.stderr?.on?.('data', (chunk) => { stderr = `${stderr}${chunk}`.slice(-8192); });
+    state.tunnel = child;
+    state.tunnelSource = source;
+    state.remotePort = remotePort;
+    state.stopping = false;
+    child.once?.('exit', () => {
+      if (state.tunnel !== child) return;
+      state.tunnel = undefined;
+      if (!state.stopping && !this.stopped && state.route === 'proxy') {
+        state.error = stderr.trim() || 'managed SSH reverse tunnel exited';
+        setTimeout(() => void this.ensure(state.alias, { force: true }), 1500).unref?.();
       }
-      state.tunnel = child;
-      state.remotePort = remotePort;
-      state.stopping = false;
-      child.once('exit', () => {
-        if (state.tunnel !== child) return;
-        state.tunnel = undefined;
-        if (!state.stopping && !this.stopped && state.route === 'proxy') {
-          state.error = stderr || 'SSH reverse tunnel exited.';
-          setTimeout(() => void this.ensure(uri, { force: true }), 1500).unref?.();
-        }
-      });
-      return child;
-    }
-    state.error = 'All candidate remote proxy ports failed.';
-    return undefined;
+    });
   }
 
-  stopTunnel(state) {
+  async tryConfiguredTunnel(alias, state, remotePort) {
+    this.stopManagedTunnel(state);
+    const child = this.adapters.startConfiguredTunnel(alias);
+    this.attachTunnel(state, child, 'managed-config-forward', remotePort);
+    await this.adapters.delay(650);
+    if (!childAlive(child)) {
+      this.stopManagedTunnel(state);
+      return false;
+    }
+    const working = await this.adapters.probeProxy(alias, remotePort, this.config.probeTimeoutMs);
+    if (!working?.ok) {
+      this.stopManagedTunnel(state);
+      return false;
+    }
+    state.route = 'proxy';
+    state.source = 'managed-config-forward';
+    this.log(`${alias}: started configured RemoteForward on 127.0.0.1:${remotePort}.`);
+    return true;
+  }
+
+  async tryExplicitTunnel(alias, state) {
+    this.stopManagedTunnel(state);
+    for (let offset = 0; offset < 20; offset += 1) {
+      const remotePort = this.config.remotePortStart + offset;
+      const child = this.adapters.startExplicitTunnel(
+        alias,
+        remotePort,
+        this.config.localProxyHost,
+        this.config.localProxyPort,
+      );
+      this.attachTunnel(state, child, 'managed-explicit-forward', remotePort);
+      await this.adapters.delay(650);
+      if (!childAlive(child)) {
+        this.stopManagedTunnel(state);
+        continue;
+      }
+      const working = await this.adapters.probeProxy(alias, remotePort, this.config.probeTimeoutMs);
+      if (!working?.ok) {
+        this.stopManagedTunnel(state);
+        continue;
+      }
+      state.route = 'proxy';
+      state.source = 'managed-explicit-forward';
+      this.log(`${alias}: opened fallback reverse proxy 127.0.0.1:${remotePort} -> ${this.config.localProxyHost}:${this.config.localProxyPort}.`);
+      return true;
+    }
+    state.error = 'All candidate fallback proxy ports failed.';
+    return false;
+  }
+
+  stopManagedTunnel(state) {
     if (!state?.tunnel) return;
     state.stopping = true;
-    state.tunnel.kill();
+    try { state.tunnel.kill(); } catch { /* already gone */ }
     state.tunnel = undefined;
-    state.remotePort = undefined;
+    state.tunnelSource = undefined;
   }
 
   async refreshAll() {
     const results = [];
-    for (const uri of this.trackedUris()) results.push(await this.ensure(uri, { force: true }));
+    for (const alias of this.states.keys()) results.push(await this.ensure(alias, { force: true }));
     return results;
   }
 
   async stop() {
     this.stopped = true;
-    this.unsubscribe?.();
     if (this.timer) clearInterval(this.timer);
-    for (const state of this.states.values()) this.stopTunnel(state);
+    for (const state of this.states.values()) this.stopManagedTunnel(state);
     this.states.clear();
   }
 }
