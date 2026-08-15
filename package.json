@@ -1,12 +1,13 @@
 {
   "name": "dsh-openssh-vpn",
-  "version": "0.3.0",
-  "description": "DeepSeek Harness native OpenSSH remote tools and Web SSH panel with direct-first GitHub routing and Windows VPN RemoteForward reuse/fallback.",
+  "version": "0.4.0",
+  "description": "DeepSeek Harness native OpenSSH Web SSH panel and SSH-backed remote workspaces with Windows VPN RemoteForward routing.",
   "type": "module",
   "main": "src/index.js",
   "exports": {
     ".": "./src/index.js",
     "./client": "./client.js",
+    "./remote-tools": "./src/remote-tools.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
@@ -37,7 +38,7 @@
     }
   },
   "scripts": {
-    "check": "node --check src/util.js && node --check src/openssh.js && node --check src/network.js && node --check src/engine.js && node --check src/tools.js && node --check src/index.js && node --check client.js",
+    "check": "node --check src/util.js && node --check src/openssh.js && node --check src/network.js && node --check src/engine.js && node --check src/tools.js && node --check src/runtime.js && node --check src/remote-workspace.js && node --check src/remote-tools.js && node --check src/index.js && node --check client.js",
     "test": "node --test test/*.test.mjs"
   },
   "keywords": [
@@ -48,6 +49,7 @@
     "openssh",
     "ssh",
     "terminal",
+    "remote-workspace",
     "remote",
     "vpn",
     "proxy",
