@@ -15,6 +15,7 @@ import { accumulateUsage } from './usage-cost.mjs';
 
 const MAX_LOG_CHARS = 250_000;
 const USAGE_MARKER = '__DHR_USAGE__';
+const BALANCE_MARKER = '__DHR_BALANCE__';
 const TERMINAL_STATUSES = new Set(['stopped', 'error']);
 const REMOTE_CLEANUP_DELAYS_MS = [0, 1500, 5000, 15000];
 
@@ -60,6 +61,7 @@ export class HarnessManager extends EventEmitter {
       exitSignal: instance.exitSignal,
       error: instance.error,
       usageAvailable: Boolean(instance.latestUsageSessionId),
+      balanceAvailable: Boolean(instance.balanceSnapshot?.ok),
       network: instance.network ? {
         enabled: Boolean(instance.network.enabled),
         mode: instance.network.mode || 'remote-direct',
@@ -127,6 +129,32 @@ export class HarnessManager extends EventEmitter {
     return () => this.off('usage', handler);
   }
 
+  balance(id) {
+    const instance = this.instances.get(id);
+    if (!instance) return undefined;
+    const snapshot = instance.balanceSnapshot;
+    return {
+      received: Boolean(snapshot),
+      active: !TERMINAL_STATUSES.has(instance.status),
+      ok: Boolean(snapshot?.ok),
+      available: snapshot?.available ?? null,
+      currency: snapshot?.currency || null,
+      total: Number.isFinite(Number(snapshot?.total)) ? Number(snapshot.total) : null,
+      granted: Number.isFinite(Number(snapshot?.granted)) ? Number(snapshot.granted) : null,
+      toppedUp: Number.isFinite(Number(snapshot?.toppedUp)) ? Number(snapshot.toppedUp) : null,
+      error: snapshot?.error || null,
+      fetchedAt: snapshot?.fetchedAt || null,
+    };
+  }
+
+  onBalance(id, listener) {
+    const handler = (event) => {
+      if (event.instanceId === id) listener(event.snapshot);
+    };
+    this.on('balance', handler);
+    return () => this.off('balance', handler);
+  }
+
   appendLog(instance, chunk) {
     instance.logs += chunk;
     if (instance.logs.length > MAX_LOG_CHARS) instance.logs = instance.logs.slice(-MAX_LOG_CHARS);
@@ -152,19 +180,40 @@ export class HarnessManager extends EventEmitter {
     return true;
   }
 
+  consumeBalanceLine(instance, line) {
+    if (!line.startsWith(BALANCE_MARKER)) return false;
+    const encoded = line.slice(BALANCE_MARKER.length).trim();
+    if (!encoded) return true;
+    try {
+      const payload = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
+      instance.balanceSnapshot = payload && typeof payload === 'object' ? payload : undefined;
+      this.emit('balance', {
+        instanceId: instance.id,
+        snapshot: this.balance(instance.id),
+      });
+    } catch (error) {
+      this.appendLog(instance, `[balance] Could not decode DeepSeek balance event: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
+    return true;
+  }
+
+  consumeTelemetryLine(instance, line) {
+    return this.consumeUsageLine(instance, line) || this.consumeBalanceLine(instance, line);
+  }
+
   handleHarnessStdout(instance, chunk) {
     const text = `${instance.stdoutBuffer || ''}${String(chunk)}`;
     const lines = text.split(/\r?\n/u);
     instance.stdoutBuffer = lines.pop() ?? '';
     for (const line of lines) {
-      if (!this.consumeUsageLine(instance, line)) this.appendLog(instance, `${line}\n`);
+      if (!this.consumeTelemetryLine(instance, line)) this.appendLog(instance, `${line}\n`);
     }
   }
 
   flushHarnessStdout(instance) {
     const line = instance.stdoutBuffer || '';
     instance.stdoutBuffer = '';
-    if (line && !this.consumeUsageLine(instance, line)) this.appendLog(instance, line);
+    if (line && !this.consumeTelemetryLine(instance, line)) this.appendLog(instance, line);
   }
 
   remoteCleanupScript(instance) {
@@ -204,8 +253,10 @@ export class HarnessManager extends EventEmitter {
     instance.exitSignal = signal || undefined;
     if (error) instance.error = error;
     this.emitInstanceStatus(instance);
-    const snapshot = this.usage(instance.id);
-    this.emit('usage', { instanceId: instance.id, snapshot, event: null });
+    const usageSnapshot = this.usage(instance.id);
+    this.emit('usage', { instanceId: instance.id, snapshot: usageSnapshot, event: null });
+    const balanceSnapshot = this.balance(instance.id);
+    this.emit('balance', { instanceId: instance.id, snapshot: balanceSnapshot });
   }
 
   async launch({ host: hostInput, workspace: workspaceInput, installRuntime = true, enableLocalProxy = false }) {
@@ -220,6 +271,7 @@ export class HarnessManager extends EventEmitter {
       stdoutBuffer: '',
       usageSessions: new Map(),
       latestUsageSessionId: undefined,
+      balanceSnapshot: undefined,
       createdAt: new Date().toISOString(),
       network: { enabled: false, mode: 'remote-direct' },
     };
@@ -242,7 +294,7 @@ export class HarnessManager extends EventEmitter {
       if (runtime.condaPath) this.appendLog(instance, `[launcher] Conda ${runtime.condaPath}\n`);
 
       await deployPlugin(host, this.pluginDirectory);
-      this.appendLog(instance, '[launcher] Session environment and usage observer plugins deployed.\n');
+      this.appendLog(instance, '[launcher] Session environment, usage and balance telemetry plugins deployed.\n');
 
       if (enableLocalProxy) {
         try {
@@ -315,7 +367,8 @@ export class HarnessManager extends EventEmitter {
       instance.status = 'running';
       this.emitInstanceStatus(instance);
       this.appendLog(instance, `[launcher] Harness ready: http://127.0.0.1:${localPort}\n`);
-      this.appendLog(instance, '[usage] Event-driven DeepSeek token/cost tracking is active; no /user/balance polling is used.\n');
+      this.appendLog(instance, '[usage] Event-driven DeepSeek session-cost tracking is active.\n');
+      this.appendLog(instance, '[balance] DeepSeek /user/balance refreshes at startup, every 30s, and after usage; balance checks do not call a model or consume tokens.\n');
       this.appendLog(instance, '[launcher] Each Harness session will ask for its Python/Conda environment on first Bash use. Use /env to change it later.\n');
       return this.publicInstance(instance);
     } catch (error) {
