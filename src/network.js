@@ -2,6 +2,7 @@ import net from 'node:net';
 import {
   probeRemoteGitHub,
   probeRemoteProxy,
+  probeSshBaseline,
   resolveOpenSshConfig,
   startConfiguredTunnel,
   startExplicitTunnel,
@@ -43,6 +44,10 @@ function childAlive(child) {
   return child && child.exitCode === null;
 }
 
+function resultError(result, fallback) {
+  return result?.stderr?.trim() || result?.error || fallback;
+}
+
 /**
  * Network policy for one or more native OpenSSH aliases.
  *
@@ -50,8 +55,9 @@ function childAlive(child) {
  * 1. remote GitHub direct;
  * 2. an already-live RemoteForward from `ssh -G` (for example VS Code's
  *    gdwyy70:35052 -> Windows 127.0.0.1:7890);
- * 3. start a dedicated SSH process that realizes that configured forward;
- * 4. create our own reverse-forward candidate at 17890+.
+ * 3. verify that a fresh authenticated SSH exec still works;
+ * 4. start exactly one configured-forward owner when a matching RemoteForward
+ *    exists, otherwise create a verified reverse-forward candidate at 17890+.
  *
  * Ordinary SSH exec/probe calls are made with ClearAllForwardings=yes by
  * openssh.js, so they never fight VS Code for the configured listen port.
@@ -68,6 +74,7 @@ export class RouteManager {
       resolve: resolveOpenSshConfig,
       probeDirect: probeRemoteGitHub,
       probeProxy: probeRemoteProxy,
+      probeSsh: probeSshBaseline,
       probeLocal: probeLocalHttpProxy,
       startConfiguredTunnel,
       startExplicitTunnel,
@@ -101,6 +108,7 @@ export class RouteManager {
       source: state.source,
       remotePort: state.remotePort,
       directOk: state.directOk,
+      sshOk: state.sshOk,
       localProxyOk: state.localProxyOk,
       localProxyDetail: state.localProxyDetail,
       configuredForward: state.configuredForward,
@@ -149,6 +157,7 @@ export class RouteManager {
     } catch (error) {
       this.stopManagedTunnel(state);
       state.route = 'unavailable';
+      state.source = 'config-unavailable';
       state.error = error instanceof Error ? error.message : String(error);
       return state;
     }
@@ -158,6 +167,7 @@ export class RouteManager {
       state.route = 'direct';
       state.source = 'forced-direct';
       state.directOk = true;
+      state.sshOk = undefined;
       return state;
     }
 
@@ -175,6 +185,7 @@ export class RouteManager {
       state.route = 'direct';
       state.source = 'remote-direct';
       state.remotePort = undefined;
+      state.sshOk = true;
       this.log(`${alias}: GitHub direct is healthy; using the server network.`);
       return state;
     }
@@ -191,6 +202,7 @@ export class RouteManager {
         state.route = 'proxy';
         state.source = 'existing-config-forward';
         state.remotePort = configured.listenPort;
+        state.sshOk = true;
         this.log(`${alias}: reusing existing RemoteForward 127.0.0.1:${configured.listenPort} -> ${this.config.localProxyHost}:${this.config.localProxyPort}.`);
         return state;
       }
@@ -199,9 +211,22 @@ export class RouteManager {
     if (!local?.ok) {
       this.stopManagedTunnel(state);
       state.route = 'unavailable';
-      state.source = undefined;
+      state.source = 'local-proxy-unavailable';
       state.remotePort = undefined;
       state.error = `Local proxy ${this.config.localProxyHost}:${this.config.localProxyPort} unavailable (${local?.detail || 'probe failed'})`;
+      this.log(`${alias}: ${state.error}`);
+      return state;
+    }
+
+    // Never hammer candidate reverse-forward ports when the base SSH transport
+    // itself is failing (e.g. TCP/banner reset through a corporate VNIC).
+    const baseline = await this.adapters.probeSsh(alias, this.config.probeTimeoutMs);
+    state.sshOk = Boolean(baseline?.ok);
+    if (!baseline?.ok) {
+      state.route = 'unavailable';
+      state.source = 'ssh-unavailable';
+      state.remotePort = undefined;
+      state.error = `SSH baseline unavailable: ${resultError(baseline, 'authenticated SSH exec failed')}`;
       this.log(`${alias}: ${state.error}`);
       return state;
     }
@@ -220,13 +245,34 @@ export class RouteManager {
     if (configured) {
       const managed = await this.tryConfiguredTunnel(alias, state, configured.listenPort);
       if (managed) return state;
+
+      // A second Harness/VS Code process may have won the bind race after our
+      // initial external probe. Re-probe once and reuse the winner rather than
+      // opening a second, unrelated fallback port.
+      const raced = await this.adapters.probeProxy(alias, configured.listenPort, this.config.probeTimeoutMs);
+      if (raced?.ok) {
+        this.stopManagedTunnel(state);
+        state.route = 'proxy';
+        state.source = 'existing-config-forward';
+        state.remotePort = configured.listenPort;
+        state.error = undefined;
+        return state;
+      }
+
+      // A matching explicit OpenSSH RemoteForward is authoritative. If it
+      // cannot be owned, fail with its exact diagnostics rather than silently
+      // moving to 17890 and creating a second proxy convention for this host.
+      state.route = 'unavailable';
+      state.source = 'configured-forward-unavailable';
+      state.remotePort = undefined;
+      return state;
     }
 
     const explicit = await this.tryExplicitTunnel(alias, state);
     if (explicit) return state;
 
     state.route = 'unavailable';
-    state.source = undefined;
+    state.source = 'fallback-unavailable';
     state.remotePort = undefined;
     state.error ||= 'Could not establish a working SSH reverse proxy tunnel.';
     return state;
