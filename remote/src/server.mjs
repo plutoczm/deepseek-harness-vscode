@@ -16,6 +16,7 @@ import { HarnessManager } from './manager.mjs';
 import { LocalHarnessManager, checkLocalRuntime, listLocalDirectories } from './local-manager.mjs';
 import { UnifiedHarnessManager } from './unified-manager.mjs';
 import { appearanceStore } from './appearance.mjs';
+import { recentWorkspaceStore } from './recent-workspaces.mjs';
 import { checkRemote, installPrivateNode22, listRemoteDirectories } from './ssh.mjs';
 import { TerminalManager, terminalProfiles } from './terminal-manager.mjs';
 
@@ -252,6 +253,25 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    if (url.pathname === '/api/recent-workspaces' && request.method === 'GET') {
+      json(response, 200, { items: await recentWorkspaceStore.get() });
+      return;
+    }
+
+    if (url.pathname === '/api/recent-workspaces' && request.method === 'POST') {
+      const entry = await recentWorkspaceStore.remember(await readJson(request));
+      json(response, 200, { entry, items: await recentWorkspaceStore.get() });
+      return;
+    }
+
+    if (url.pathname === '/api/recent-workspaces' && request.method === 'DELETE') {
+      const key = url.searchParams.get('key');
+      if (key) await recentWorkspaceStore.remove(key);
+      else await recentWorkspaceStore.clear();
+      json(response, 200, { items: await recentWorkspaceStore.get() });
+      return;
+    }
+
     if (url.pathname === '/api/check' && request.method === 'POST') {
       const { host } = await readJson(request);
       json(response, 200, await checkRemote(host));
@@ -446,4 +466,4 @@ async function shutdown() {
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
-export { appearanceStore, localManager, manager, remoteManager, server, terminalManager };
+export { appearanceStore, localManager, manager, recentWorkspaceStore, remoteManager, server, terminalManager };
