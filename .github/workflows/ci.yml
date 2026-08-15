@@ -1,72 +1,64 @@
-name: CI
+name: Plugin CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'feature/**']
   pull_request:
-    branches: [main]
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [22, 24]
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '22'
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Compile extension
-        run: npm run compile
-
-      - name: Check Harness plugin syntax
+          node-version: ${{ matrix.node }}
+      - name: Install test dependencies
+        run: npm install --ignore-scripts --legacy-peer-deps
+      - name: Syntax check
+        run: npm run check
+      - name: Unit tests
+        run: npm test
+      - name: Verify standalone bundle payload
         run: |
-          node --check harness-plugin/index.js
-          bash -n harness-plugin/bash-env.sh
-
-      - name: Test per-session Bash bootstrap
+          node -e "const p=require('./package.json'); if(p.name!=='dsh-openssh-vpn') throw new Error('wrong package name'); if(!p.dsh?.bundle?.patch) throw new Error('missing dsh.bundle'); if(p.dependencies && Object.keys(p.dependencies).length) throw new Error('runtime dependencies are intentionally unnecessary')"
+          test -f cordis.patch.yml
+          test -f src/index.js
+          test -f src/openssh.js
+          test -f src/network.js
+          test -f src/engine.js
+          test -f src/tools.js
+          ! grep -R "sshRemote" src package.json cordis.patch.yml
+          ! grep -R "dsh-ssh-remote" src package.json cordis.patch.yml
+      - name: Smoke-test packaged plugin with official Harness
+        timeout-minutes: 12
         shell: bash
         run: |
           set -euo pipefail
-          tmp="$(mktemp -d)"
-          trap 'rm -rf "$tmp"' EXIT
-          mkdir -p "$tmp/session-env"
-          printf 'export DSH_VSCODE_ENV_TEST=selected\n' > "$tmp/session-env/session_1.sh"
-          printf 'export DSH_VSCODE_PARENT_TEST=parent\n' > "$tmp/parent-bash-env.sh"
-          DSH_SESSION_ID='session/1' \
-          DEEPSEEK_HARNESS_SESSION_ENV_DIR="$tmp/session-env" \
-          DEEPSEEK_HARNESS_PARENT_BASH_ENV="$tmp/parent-bash-env.sh" \
-          BASH_ENV="$PWD/harness-plugin/bash-env.sh" \
-          bash -c 'test "$DSH_VSCODE_ENV_TEST" = selected && test "$DSH_VSCODE_PARENT_TEST" = parent'
+          npm install -g pnpm@10
+          package_file="$(npm pack --silent | tail -n 1)"
+          package_path="$PWD/$package_file"
+          export DSH_HOME="$RUNNER_TEMP/dsh-openssh-vpn-${{ matrix.node }}"
 
-      - name: Smoke-test official Harness plugin boot
-        timeout-minutes: 4
-        shell: bash
-        run: |
-          set -euo pipefail
-          export DSH_HOME="$RUNNER_TEMP/dsh-vscode-smoke"
-          export DEEPSEEK_HARNESS_SESSION_ENV_DIR="$RUNNER_TEMP/dsh-vscode-session-env"
-          export DEEPSEEK_HARNESS_BASE_PATH="$PATH"
-          export BASH_ENV="$PWD/harness-plugin/bash-env.sh"
-          plugin_dir="$DSH_HOME/profiles/node_modules/deepseek-harness-vscode-session-env"
-          mkdir -p "$plugin_dir" "$DEEPSEEK_HARNESS_SESSION_ENV_DIR"
-          cp harness-plugin/package.json harness-plugin/index.js "$plugin_dir/"
-          log="$RUNNER_TEMP/deepseek-harness-web.log"
-          npx --yes @deepseek-ai/dsh --profile web --patch "$PWD/harness-plugin/cordis.patch.yml" --port 33080 >"$log" 2>&1 &
+          # One package only: no secondary SSH provider and no Git subdependency.
+          npx --yes @deepseek-ai/dsh plugin --profile web add "$package_path"
+          npx --yes @deepseek-ai/dsh web --dump-default-config | grep -q 'dsh-openssh-vpn'
+
+          log="$RUNNER_TEMP/dsh-openssh-vpn-${{ matrix.node }}.log"
+          npx --yes @deepseek-ai/dsh --profile web --port 33082 >"$log" 2>&1 &
           pid=$!
           cleanup() {
             kill "$pid" 2>/dev/null || true
             wait "$pid" 2>/dev/null || true
           }
           trap 'cleanup' EXIT
+
           ready=0
           for _ in $(seq 1 360); do
-            if curl -fsS http://127.0.0.1:33080/ >/dev/null 2>&1; then
+            if curl -fsS http://127.0.0.1:33082/ >/dev/null 2>&1; then
               ready=1
               break
             fi
@@ -80,23 +72,34 @@ jobs:
             cat "$log"
             exit 1
           fi
+
           cleanup
           trap - EXIT
 
-      - name: Package VSIX
-        run: npm run package
-
-      - name: Verify VSIX contents
-        run: |
-          unzip -l deepseek-harness-vscode.vsix | grep -F 'extension/dist/extension.js'
-          unzip -l deepseek-harness-vscode.vsix | grep -F 'extension/harness-plugin/index.js'
-          unzip -l deepseek-harness-vscode.vsix | grep -F 'extension/harness-plugin/bash-env.sh'
-          unzip -l deepseek-harness-vscode.vsix | grep -F 'extension/harness-plugin/cordis.patch.yml'
-
-      - name: Upload VSIX artifact
-        uses: actions/upload-artifact@v4
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          name: deepseek-harness-vscode-vsix
-          path: deepseek-harness-vscode.vsix
-          if-no-files-found: error
-          retention-days: 30
+          node-version: '24'
+      - name: Verify Windows OpenSSH client
+        shell: pwsh
+        run: |
+          $ssh = Get-Command ssh.exe -ErrorAction Stop
+          $scp = Get-Command scp.exe -ErrorAction Stop
+          Write-Host "OpenSSH: $($ssh.Source)"
+          Write-Host "SCP: $($scp.Source)"
+          ssh -V
+      - name: Install test dependencies
+        run: npm install --ignore-scripts --legacy-peer-deps
+      - name: Syntax check
+        run: npm run check
+      - name: Unit tests
+        run: npm test
+      - name: Pack plugin
+        shell: pwsh
+        run: |
+          $package = (npm pack --silent | Select-Object -Last 1).Trim()
+          if (-not (Test-Path $package)) { throw "npm pack did not create $package" }
+          Write-Host "Packed: $package"

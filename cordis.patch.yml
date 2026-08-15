@@ -1,0 +1,6 @@
+# Standalone native OpenSSH + Windows VPN routing plugin.
+# No second SSH provider is required: the plugin uses the operating system
+# ssh/scp executables and the user's real ~/.ssh/config directly.
+- insert:
+    - id: dsh-openssh-vpn
+      name: dsh-openssh-vpn

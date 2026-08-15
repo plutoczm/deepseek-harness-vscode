@@ -1,265 +1,158 @@
-# DeepSeek Harness Remote
+# dsh-openssh-vpn
 
-Run the **official DeepSeek Harness** on a remote Linux server over SSH from a dedicated Windows desktop application. VS Code is not required for the recommended workflow, and normal users do not need to start the launcher from a terminal.
+A focused DeepSeek Harness plugin for **native OpenSSH remote operations** and **Windows VPN/proxy reuse**.
 
-The repository still contains the previously published VS Code extension, but the desktop app in [`remote/`](./remote/) is the recommended path.
+The invariant is simple:
 
-## Architecture
+> If `ssh <alias>` works for the Windows account running Harness, the plugin uses that same `ssh.exe`, the same `~/.ssh/config`, the same key selection, ProxyJump/ProxyCommand rules, known_hosts and RemoteForward configuration.
 
-```text
-DeepSeek Harness Remote desktop app
-    │
-    ├── reads ~/.ssh/config
-    ├── selects an SSH host and remote workspace
-    ├── browses and previews remote files
-    ├── checks remote Node / Python / Conda
-    ├── optionally installs a private Node 22 runtime (no sudo)
-    └── opens an SSH local port-forward
-             │
-             ▼
-      Remote Linux server
-             │
-             └── official @deepseek-ai/dsh --profile web
-                    │
-                    ├── native Harness tools / web_search / Git / Bash
-                    ├── per-Harness-session Python environment picker
-                    └── event-driven token/cost observer
-```
+There is no second Node `ssh2` credential stack and no `sshRemote` provider dependency.
 
-Harness itself runs on the selected remote host, so its filesystem, Git, Bash and Python operations naturally target that server. The launcher does not reimplement the agent or its coding tools.
+## What it provides
 
-## Windows desktop app
+Harness agent tools:
 
-The primary distribution target is a Windows x64 NSIS installer:
+- `openssh_list` — concrete aliases discovered from `%USERPROFILE%\.ssh\config`, resolved with the real `ssh -G`.
+- `openssh_exec` — remote command execution through system OpenSSH.
+- `openssh_proxy_status` — direct/proxy route diagnostics and refresh.
+- `openssh_upload` / `openssh_download` — file transfer through system `scp`.
 
-```text
-DeepSeek-Harness-Remote-0.4.0-Setup-x64.exe
-```
+The package is a normal `dsh.bundle` and boots as a standalone Web-profile plugin.
 
-After installation, launch **DeepSeek Harness Remote** from the desktop shortcut or Start menu. The app starts its loopback control service internally and opens both the launcher and Harness in desktop windows. No PowerShell, `npm run remote`, or manual localhost tab is required for normal use.
+## Why system OpenSSH
 
-SSH authentication is delegated to the system OpenSSH client. An existing command such as:
+Windows OpenSSH already handles the difficult compatibility surface correctly:
+
+- default IdentityFile selection;
+- encrypted/private key handling supported by the user's actual setup;
+- Include / Match;
+- ProxyJump / ProxyCommand;
+- known_hosts;
+- RemoteForward;
+- Windows-specific OpenSSH behavior.
+
+The plugin asks OpenSSH for the effective configuration using `ssh -G <alias>` instead of re-parsing those semantics itself.
+
+## VS Code RemoteForward reuse
+
+A common setup is:
 
 ```text
-ssh my-server
+remote 127.0.0.1:35052
+        |
+        | SSH RemoteForward owned by VS Code
+        v
+Windows 127.0.0.1:7890
+        |
+        v
+       VPN
 ```
 
-should already work with key/agent authentication.
-
-Typical flow:
-
-1. Choose or type an SSH alias.
-2. Click **检查连接**.
-3. Pick a remote workspace from the collapsible directory browser or **远程文件** page.
-4. Click **连接并打开 Harness**.
-5. The official Harness Web UI opens through the SSH tunnel.
-
-Concrete `Host` aliases from `~/.ssh/config` populate the server list, but any alias understood by the system `ssh` command can be entered manually.
-
-## Event-driven DeepSeek token and cost display
-
-Version 0.4.0 no longer polls DeepSeek `/user/balance`.
-
-The bundled Harness usage observer wraps the official `llm/stream` extension seam. When the provider emits Harness's canonical `usage` chunk, the observer forwards that usage event over the already-open Harness SSH stdout channel. The desktop process consumes the marker locally and updates the Harness cost widget immediately.
+For example, `ssh -G gdwyy70` may contain:
 
 ```text
-provider response
-    ↓
-Harness StreamChunk { type: "usage" }
-    ↓
-remote usage observer
-    ↓ existing SSH stdout
-local HarnessManager
-    ↓ in-process event
-Electron Harness window
+remoteforward 35052 [127.0.0.1]:7890
 ```
 
-There is no fixed 10-second timer and no balance-endpoint request. The update boundary is the same provider-usage boundary that feeds Harness's own token accounting.
+The plugin's proxy policy is:
 
-The widget shows the most recently active Harness session within that remote Harness instance:
+1. In `auto` mode, probe GitHub directly from the remote host.
+2. If direct access works, use the server network.
+3. If direct access fails, probe the Windows HTTP/mixed proxy at `127.0.0.1:7890`.
+4. If `ssh -G` exposes a matching RemoteForward, probe its remote listen port first.
+5. If that port is already live (for example VS Code owns `35052`), **reuse it and do not create or kill any tunnel**.
+6. If the configured RemoteForward exists but is not live, start a dedicated OpenSSH `-N` process so the configured forward becomes live.
+7. If no matching RemoteForward exists, create a fallback reverse forward on `127.0.0.1:17890+`.
+
+All ordinary command/probe SSH calls include:
 
 ```text
-DeepSeek API                       ● 实时事件
-
-当前会话消耗                      ¥0.001284
-Input  24.8K   Output  1.4K   Cache  91%
-DeepSeek-V4-Flash · 本次 ¥0.000143 · 7 次 usage
+-o ClearAllForwardings=yes
 ```
 
-Accounting uses the same disjoint buckets as Harness:
+so a short-lived Harness command never tries to bind the same configured RemoteForward again and never fights VS Code for `35052`.
+
+## Proxy environment
+
+When proxy routing is active, `openssh_exec` prefixes the remote command with:
 
 ```text
-billed input = uncached input + cache reads + cache writes
-cache hit %  = cache reads / billed input
+HTTP_PROXY=http://127.0.0.1:<remote-port>
+HTTPS_PROXY=http://127.0.0.1:<remote-port>
+ALL_PROXY=http://127.0.0.1:<remote-port>
 ```
 
-Cost is computed locally from the provider-reported token buckets. The 0.4.0 bundled CNY price table follows the DeepSeek V4 public pricing available at release time:
+Upper- and lower-case forms are both exported. Default `NO_PROXY` includes DeepSeek domains and loopback addresses.
 
-| Model | Cache hit / 1M | Cache miss / 1M | Output / 1M |
-|---|---:|---:|---:|
-| `deepseek-v4-flash` | ¥0.02 | ¥1 | ¥2 |
-| `deepseek-v4-pro` | ¥0.025 | ¥3 | ¥6 |
+## Requirements
 
-Unknown/custom model ids keep showing exact token telemetry but are marked **unpriced** rather than silently applying the wrong rate. When DeepSeek changes model pricing, this local table should be updated in a new app release.
+- Node 22+ / current DeepSeek Harness.
+- Windows OpenSSH `ssh.exe` and `scp.exe` on PATH.
+- A working OpenSSH alias, e.g.:
 
-For spend accuracy, every provider usage event carrying the Harness `sessionId` is included, including auxiliary session calls such as title or compaction work. This means the money figure is intended to represent the API work attributable to that Harness session rather than merely duplicating the visible conversation-only token row.
+```cmd
+ssh gdwyy70
+```
 
-## Network behavior and optional local proxy fallback
+- For VPN fallback, an HTTP or mixed proxy on Windows `127.0.0.1:7890`.
 
-The default network mode is deliberately simple:
+No remote Python helper is required in v0.2.0.
+
+## Install development build
+
+Use an exact commit during acceptance testing:
+
+```cmd
+npx @deepseek-ai/dsh plugin --profile web add "github:plutoczm/deepseek-harness-vscode#<commit-sha>"
+```
+
+Then:
+
+```cmd
+npx @deepseek-ai/dsh web
+```
+
+Because the tools are named `openssh_*`, this development build can coexist with `@captain1275/dsh-ssh` while testing. The final single-provider cleanup can remove the older plugin after native OpenSSH acceptance.
+
+## Environment options
 
 ```text
-Harness / DeepSeek API / web_search / Git / Bash
-    -> remote server network directly
+DSH_SSH_PROXY_MODE=auto          # auto | direct | proxy
+DSH_SSH_PROXY_HOST=127.0.0.1
+DSH_SSH_PROXY_PORT=7890
+DSH_SSH_PROXY_REMOTE_PORT=17890
+DSH_SSH_PROXY_HEALTH_INTERVAL_MS=60000
+DSH_SSH_PROXY_NO_PROXY=api.deepseek.com,.deepseek.com,127.0.0.1,localhost,::1
+DSH_SSH_ALIASES=gdwyy70,gpu02    # optional aliases not discoverable from the main config file
 ```
 
-The launcher does **not** automatically probe or use the local VPN/proxy.
+`auto` is recommended.
 
-If a remote server later loses access to GitHub or other external sites, expand **高级网络** before launching a new instance and explicitly enable:
+## Real acceptance target
+
+For the current reference machine:
 
 ```text
-网络故障时使用本机代理 127.0.0.1:7890
+alias: gdwyy70
+resolved target: czm2025@172.23.207.70:22
+authenticated key: C:\Users\Admin1\.ssh\id_rsa
+configured RemoteForward: remote 35052 -> Windows 127.0.0.1:7890
+remote project: /mnt/ext-disk/czm2025/Projects/face_privacy_tkde
 ```
 
-Only then does the app create the optional SSH reverse proxy bridge for Bash/tool subprocess traffic. The option applies to that newly launched Harness instance only. DeepSeek model traffic is not globally assigned the local proxy.
+The already-observed external tunnel successfully returned GitHub HTTP 200 and `git ls-remote origin HEAD` through `127.0.0.1:35052`.
 
-The development overrides remain available:
+See `WINDOWS-TEST.md` for the next packaged-plugin acceptance run.
 
-```text
-DSH_LOCAL_PROXY_HOST
-DSH_LOCAL_PROXY_PORT
-```
+## Security boundary
 
-The fallback currently expects an HTTP/mixed proxy that accepts HTTP `CONNECT`; a SOCKS-only endpoint is treated as unavailable rather than silently changing model routing.
+- Private keys are not copied into plugin settings or a second JSON credential store.
+- Authentication is delegated to the installed system OpenSSH client.
+- Existing external tunnels are never killed by the plugin.
+- Harness-managed reverse listeners bind to remote loopback.
+- The plugin never reads or exports the DeepSeek API key.
+- No weakening of pnpm `blockExoticSubdeps` / supply-chain policy is required.
 
-## Remote file browser
+## Status
 
-The desktop app includes a read-only remote server explorer using the permissions of the selected SSH user.
-
-- Browse arbitrary accessible directories.
-- Search/filter the current directory client-side.
-- Jump to `/`, the SSH user's home directory, or the current Harness workspace.
-- Preview text files up to the first 1 MiB.
-- Preview PNG/JPEG/GIF/WebP/BMP images up to 15 MiB.
-- Copy remote file paths.
-- Set the current directory as the Harness workspace with one click.
-- Large/binary files are shown as metadata rather than transferred into the UI.
-
-The browser does not bypass server permissions and does not modify remote files. Code edits remain the responsibility of official Harness.
-
-## Remote Node runtime
-
-Current Harness dependencies require a modern Node runtime. If the remote system Node is too old, the launcher can install a private Node 22 runtime under:
-
-```text
-~/.deepseek-harness-remote/runtime/node
-```
-
-This does not require root access and does not replace the server's system Node installation. The private runtime is used only by Harness Remote launches.
-
-## Per-session Conda / venv selection
-
-The bundled session-environment plugin binds an environment choice to the official Harness `DSH_SESSION_ID`.
-
-On the first Bash action of each root Harness session, the native Harness Web UI presents a single-choice question such as:
-
-```text
-Python Environment
-
-○ Harness default
-○ .venv
-○ venv
-○ conda: base
-○ conda: project-env
-```
-
-The choice applies only to that Harness session, and subagents inherit the parent selection. A custom virtual-environment path can also be selected through `/env`.
-
-Useful commands:
-
-```text
-/env
-/env status
-/env system
-/env conda: project-env
-/env /absolute/path/to/venv
-```
-
-Harness Bash calls are fresh `bash -c` processes, so the plugin writes a small session-specific activation fragment and loads it through `BASH_ENV` for every Bash call instead of relying on one long-lived `conda activate` shell.
-
-Environment state is stored remotely under:
-
-```text
-~/.deepseek-harness-remote/session-env
-```
-
-## Remote files created
-
-The launcher uses the current SSH user's home directory:
-
-```text
-~/.deepseek-harness-remote/
-├── runtime/node/       # optional private Node 22
-├── plugin/             # session-env + usage observer deployment files
-├── session-env/        # per-session environment + optional network state
-└── logs/
-```
-
-The plugin packages are also copied into the user's normal Harness module-resolution directory under `$DSH_HOME` (default `~/.dsh`).
-
-## Security model
-
-- The local control service binds to `127.0.0.1`, not the LAN.
-- Electron renderers use sandboxing, context isolation and no Node integration.
-- SSH authentication is delegated to the system OpenSSH client and `~/.ssh/config`.
-- The launcher does not store SSH private keys.
-- Harness Web traffic is exposed locally only through `ssh -L`.
-- The optional VPN/proxy bridge is disabled by default and is enabled only per requested instance.
-- The usage observer forwards token counts/model ids/session ids only; it does not forward the DeepSeek API key or prompt/response content.
-- No `/user/balance` polling is performed by the 0.4.0 cost display.
-- Remote commands run with the permissions of the selected SSH user.
-- Unexpected non-local application-window navigation is blocked; normal HTTPS links open externally.
-
-## Current scope
-
-The remote execution path targets Linux SSH hosts with Bash. Embedded SSH password prompts are intentionally not supported; configure key/agent authentication first. If the remote system Node is too old, private-runtime installation requires that server to reach `nodejs.org`.
-
-The cost widget is event-driven and session-aware, but the desktop overlay follows the **most recently active usage-producing session** inside a Harness instance. Switching to an old idle session does not synthesize a new usage event; the next model request from that session makes it current immediately.
-
-## Development
-
-The terminal workflow remains available for contributors and debugging:
-
-```bash
-cd remote
-npm install
-npm run check
-npm test
-npm run desktop
-```
-
-Build the Windows installer with:
-
-```bash
-npm run desktop:win
-```
-
-GitHub Actions builds the Windows x64 installer and uploads it as the `DeepSeek-Harness-Remote-Windows-x64` workflow artifact.
-
-## Branding
-
-The desktop launcher uses its own monochrome whale mark and a DeepSeek Harness-inspired interface. It is a community remote launcher and is not affiliated with or endorsed by DeepSeek. DeepSeek Harness itself remains the official upstream runtime launched on the selected server.
-
-## Legacy VS Code extension
-
-The existing Marketplace extension remains in this repository for users who want the VS Code workflow:
-
-```text
-plutoczm.deepseek-harness-vscode-plutoczm
-```
-
-The desktop `remote/` app is the recommended architecture for SSH-host selection and remote Harness execution because it avoids VS Code Server, Remote Extension Host and file-watcher lifecycle coupling.
-
-## License
-
-MIT
+`0.2.0` is the standalone OpenSSH core. CI covers Node 22/24, pure route-policy tests, Windows OpenSSH presence, package creation, and clean-profile official Harness boot without any secondary SSH provider.

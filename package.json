@@ -1,85 +1,53 @@
 {
-  "name": "deepseek-harness-vscode-plutoczm",
-  "displayName": "DeepSeek Harness Remote SSH",
-  "description": "Launch the official DeepSeek Harness Web UI from VS Code with Remote SSH and per-session Python environment support.",
-  "version": "0.4.1",
-  "publisher": "plutoczm",
-  "license": "MIT",
-  "pricing": "Free",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/plutoczm/deepseek-harness-vscode.git"
+  "name": "dsh-openssh-vpn",
+  "version": "0.2.4",
+  "description": "DeepSeek Harness native OpenSSH remote tools with direct-first GitHub routing and Windows VPN RemoteForward reuse/fallback.",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
   },
-  "homepage": "https://github.com/plutoczm/deepseek-harness-vscode#readme",
-  "bugs": {
-    "url": "https://github.com/plutoczm/deepseek-harness-vscode/issues"
-  },
-  "engines": {
-    "vscode": "^1.100.0"
-  },
-  "categories": ["Machine Learning", "Other"],
-  "keywords": ["deepseek", "harness", "agent", "remote-ssh", "coding-agent", "python", "conda", "venv"],
-  "activationEvents": [
-    "onStartupFinished",
-    "onCommand:deepseekHarness.open",
-    "onCommand:deepseekHarness.openExternal",
-    "onCommand:deepseekHarness.start",
-    "onCommand:deepseekHarness.stop",
-    "onCommand:deepseekHarness.restart",
-    "onCommand:deepseekHarness.showLogs"
+  "files": [
+    "src",
+    "cordis.patch.yml",
+    "README.md",
+    "WINDOWS-TEST.md",
+    "LICENSE",
+    "NOTICE"
   ],
-  "main": "./dist/extension.js",
-  "extensionKind": ["workspace"],
-  "contributes": {
-    "commands": [
-      {"command": "deepseekHarness.open", "title": "DeepSeek Harness: Open in VS Code"},
-      {"command": "deepseekHarness.openExternal", "title": "DeepSeek Harness: Open in Browser"},
-      {"command": "deepseekHarness.start", "title": "DeepSeek Harness: Start"},
-      {"command": "deepseekHarness.stop", "title": "DeepSeek Harness: Stop"},
-      {"command": "deepseekHarness.restart", "title": "DeepSeek Harness: Restart"},
-      {"command": "deepseekHarness.showLogs", "title": "DeepSeek Harness: Show Logs"}
-    ],
-    "configuration": {
-      "title": "DeepSeek Harness",
-      "properties": {
-        "deepseekHarness.port": {
-          "type": "number",
-          "default": 3080,
-          "minimum": 1024,
-          "maximum": 65535,
-          "description": "Port used by the official DeepSeek Harness Web UI on the workspace host."
-        },
-        "deepseekHarness.npxPath": {
-          "type": "string",
-          "default": "npx",
-          "description": "Path to npx on the workspace host. For Remote SSH, this is the remote host's npx."
-        },
-        "deepseekHarness.startupTimeoutMs": {
-          "type": "number",
-          "default": 120000,
-          "minimum": 5000,
-          "maximum": 600000,
-          "description": "Maximum time to wait for the Harness Web UI to start. First launch may take longer while npx downloads the package."
-        }
-      }
+  "engines": {
+    "node": ">=22"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "*"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -w -p ./",
-    "package": "npm run compile && vsce package --out deepseek-harness-vscode.vsix",
-    "check": "npm run compile",
-    "remote": "npm --prefix remote start",
-    "remote:desktop": "npm --prefix remote run desktop",
-    "remote:desktop:win": "npm --prefix remote run desktop:win",
-    "remote:check": "npm --prefix remote run check",
-    "remote:test": "npm --prefix remote test"
+    "check": "node --check src/util.js && node --check src/openssh.js && node --check src/network.js && node --check src/engine.js && node --check src/tools.js && node --check src/index.js",
+    "test": "node --test test/*.test.mjs"
   },
-  "devDependencies": {
-    "@types/node": "^22.0.0",
-    "@types/vscode": "^1.100.0",
-    "@vscode/vsce": "^3.6.0",
-    "typescript": "^5.8.0"
+  "keywords": [
+    "deepseek",
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "openssh",
+    "ssh",
+    "remote",
+    "vpn",
+    "proxy",
+    "clash",
+    "mihomo"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/plutoczm/deepseek-harness-vscode.git"
   }
 }

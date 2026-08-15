@@ -1,6 +1,0 @@
-.github/**
-.vscode/**
-src/**
-node_modules/**/.cache/**
-*.map
-.gitignore

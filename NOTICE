@@ -1,0 +1,7 @@
+dsh-openssh-vpn is implemented as a standalone native OpenSSH DeepSeek Harness plugin.
+
+The runtime does not bundle, mount, or depend on CrazyShout/dsh-ssh-remote or @captain1275/dsh-ssh. SSH authentication and configuration semantics are delegated to the operating system OpenSSH client (`ssh` / `scp`) and the user's own OpenSSH configuration.
+
+The repository's implementation includes OpenSSH effective-config parsing through `ssh -G`, direct-first GitHub reachability probing, Windows HTTP/mixed-proxy detection, existing RemoteForward reuse, managed reverse-tunnel fallback, proxy environment injection for remote commands, file transfer through system `scp`, and Harness-native agent tools.
+
+External projects were reviewed for interoperability and architecture comparison; their source code is not vendored in the 0.2.0 runtime.
