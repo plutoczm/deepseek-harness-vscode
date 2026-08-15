@@ -1,8 +1,6 @@
-# One bundle: remote SSH workspace + Windows local proxy bridge.
-# dsh-ssh-remote owns SSH workspace/filesystem routing. This package layers
-# direct-first network fallback and proxy-aware remote terminals on top.
+# VPN/stability bridge only.
+# The SSH workspace provider must be installed explicitly as a top-level
+# Harness plugin, so this patch must not insert dsh-ssh-remote again.
 - insert:
-    - id: dsh-ssh-vpn-remote
-      name: dsh-ssh-remote
     - id: dsh-ssh-vpn-bridge
       name: dsh-ssh-vpn-bridge
