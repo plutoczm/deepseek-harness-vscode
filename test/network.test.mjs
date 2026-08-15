@@ -167,6 +167,35 @@ test('route manager owns the configured forward only when the external 35052 tun
   assert.equal(child.exitCode, 0);
 });
 
+test('managed configured forward waits for a real OpenSSH handshake instead of failing after 650ms', async () => {
+  let probes = 0;
+  let waits = 0;
+  const child = fakeChild();
+  const manager = new RouteManager({}, { mode: 'proxy', probeTimeoutMs: 8000 }, {
+    resolve: async () => parseOpenSshConfig(WINDOWS_SSH_G, 'gdwyy70'),
+    probeLocal: async () => ({ ok: true, detail: 'HTTP/1.1 200 Connection established' }),
+    probeProxy: async (_alias, port) => {
+      assert.equal(port, 35052);
+      probes += 1;
+      // First probe checks for an external VS Code tunnel. The next three
+      // model a Windows OpenSSH process that is still handshaking. Only the
+      // fifth probe sees the configured RemoteForward become usable.
+      return { ok: probes >= 5 };
+    },
+    startConfiguredTunnel: () => child,
+    startExplicitTunnel: () => { throw new Error('fallback must not run while configured tunnel is still starting'); },
+    delay: async () => { waits += 1; },
+  });
+
+  const state = await manager.ensure('gdwyy70', { force: true });
+  assert.equal(state.route, 'proxy');
+  assert.equal(state.source, 'managed-config-forward');
+  assert.equal(state.remotePort, 35052);
+  assert.equal(probes, 5);
+  assert.ok(waits >= 3);
+  await manager.stop();
+});
+
 test('route manager falls back to an independent 17890+ reverse tunnel when no matching RemoteForward exists', async () => {
   const resolved = parseOpenSshConfig('user czm2025\nhostname 172.23.207.70\nport 22\n', 'gdwyy70');
   let explicitPort;
