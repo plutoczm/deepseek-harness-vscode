@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import test from 'node:test';
-import { probeLocalHttpProxy } from '../src/network.js';
+import { RouteManager, probeLocalHttpProxy } from '../src/network.js';
+import { installSystemOpenSshTransport } from '../src/openssh-transport.js';
 import { normalizeConfig, parseSshUri, prefixShellEnvironment, proxyEnvironment } from '../src/util.js';
 
 test('default configuration targets Windows mixed proxy 127.0.0.1:7890', () => {
@@ -45,4 +46,43 @@ test('local HTTP CONNECT proxy probe recognizes a 200 response', async () => {
   const result = await probeLocalHttpProxy('127.0.0.1', address.port, 1000);
   server.close();
   assert.equal(result.ok, true);
+});
+
+test('route manager tracks connected explicit workspaces and persisted native anchors', () => {
+  const manager = new RouteManager({
+    sshRemote: {
+      list: () => [
+        { uri: 'ssh://gdwyy70/home/czm/project', status: 'connected' },
+        { uri: 'ssh://ignored/home/czm/project', status: 'disconnected' },
+      ],
+      anchors: new Map([
+        ['a', { uri: 'ssh://gdwyy70/mnt/ext-disk/project' }],
+        ['b', { uri: 'ssh://gpu02/work' }],
+      ]),
+    },
+  });
+  assert.deepEqual(new Set(manager.trackedUris()), new Set([
+    'ssh://gdwyy70/home/czm/project',
+    'ssh://gdwyy70/mnt/ext-disk/project',
+    'ssh://gpu02/work',
+  ]));
+});
+
+test('system OpenSSH transport replaces and restores upstream transport factory', async () => {
+  const originalTransport = async () => ({ upstream: true });
+  const originalClose = async () => {};
+  const connections = { transport: originalTransport, close: originalClose };
+  const ctx = { sshRemote: { connections } };
+  const restore = installSystemOpenSshTransport(ctx);
+
+  const transport = await connections.transport('ssh://gdwyy70/mnt/ext-disk/project');
+  assert.equal(transport.status, 'connected');
+  assert.equal(transport.hostKey, 'gdwyy70:22');
+  assert.equal(typeof transport.sftp, 'function');
+  assert.equal(typeof transport.exec, 'function');
+  assert.equal(typeof transport.shell, 'function');
+
+  restore();
+  assert.equal(connections.transport, originalTransport);
+  assert.equal(connections.close, originalClose);
 });
