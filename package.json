@@ -22,12 +22,6 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
-    },
-    "client": {
-      "inject": [
-        "dsh-ssh-remote/client"
-      ],
-      "platform": "web"
     }
   },
   "dependencies": {
