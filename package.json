@@ -27,11 +27,6 @@
   "dependencies": {
     "dsh-ssh-remote": "github:CrazyShout/dsh-ssh-remote#72a2ac6b0f277ab0706ee93634dee2c639070728"
   },
-  "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-subprocess": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-terminal": "^0.1.0-rc.6"
-  },
   "scripts": {
     "check": "node --check src/util.js && node --check src/network.js && node --check src/process.js && node --check src/terminal.js && node --check src/index.js",
     "test": "node --test test/*.test.mjs"
