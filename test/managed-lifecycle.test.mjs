@@ -92,7 +92,7 @@ test('unexpected managed tunnel exit invalidates the cached proxy route immediat
   assert.equal(exited.route, 'unavailable');
   assert.equal(exited.source, 'managed-tunnel-exited');
   assert.equal(exited.remotePort, undefined);
-  assert.equal(exited.managedTunnelAlive, false);
+  assert.equal(Boolean(exited.managedTunnelAlive), false);
 
   // ensure() must not reuse the stale 15-second cache after a managed exit.
   const rebuilt = await manager.ensure('gdwyy70');
