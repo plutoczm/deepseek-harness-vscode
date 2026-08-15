@@ -24,12 +24,12 @@ jobs:
         run: npm test
       - name: Verify bundle payload
         run: |
-          node -e "const p=require('./package.json'); if(!p.dsh?.bundle?.patch) process.exit(1)"
+          node -e "const p=require('./package.json'); if(!p.dsh?.bundle?.patch) process.exit(1); if(p.dependencies?.['dsh-ssh-remote']) throw new Error('SSH provider must not be a transitive Git dependency')"
           test -f cordis.patch.yml
           test -f src/index.js
       - name: Smoke-test packaged plugin with official Harness
         if: matrix.node == 22
-        timeout-minutes: 8
+        timeout-minutes: 10
         shell: bash
         run: |
           set -euo pipefail
@@ -37,6 +37,9 @@ jobs:
           export DSH_HOME="$RUNNER_TEMP/dsh-ssh-vpn-smoke"
           package_file="$(npm pack --silent | tail -n 1)"
 
+          # Keep the SSH provider a visible top-level plugin. This satisfies
+          # pnpm blockExoticSubdeps instead of weakening the supply-chain policy.
+          npx --yes @deepseek-ai/dsh plugin --profile web add 'github:CrazyShout/dsh-ssh-remote#72a2ac6b0f277ab0706ee93634dee2c639070728'
           npx --yes @deepseek-ai/dsh plugin --profile web add "$PWD/$package_file"
 
           log="$RUNNER_TEMP/dsh-ssh-vpn-web.log"
