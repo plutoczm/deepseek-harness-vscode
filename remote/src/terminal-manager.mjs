@@ -94,7 +94,9 @@ export class TerminalManager {
   }
 
   list() {
-    return [...this.terminals.values()].map((terminal) => this.publicTerminal(terminal));
+    // The HTTP endpoint is loopback + same-origin only; returning the random websocket token here
+    // lets the launcher reconnect xterm views after a renderer reload without restarting the PTY.
+    return [...this.terminals.values()].map((terminal) => this.publicTerminal(terminal, true));
   }
 
   get(id) {
