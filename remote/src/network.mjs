@@ -34,6 +34,39 @@ function parseMarkerLines(text, prefix) {
   return result;
 }
 
+function pushReadiness(values) {
+  if (values.skipped === '1') return { status: 'not-checked', reason: 'Workspace checks were skipped.' };
+  if (values.isRepo !== '1') return { status: 'not-repository', reason: 'The selected workspace is not a Git repository.' };
+  if (!values.origin) return { status: 'no-origin', reason: 'No origin remote is configured.' };
+  if (values.brokenHelper === '1') return { status: 'credential-error', reason: 'A known-broken repository-local GitHub credential helper is configured.' };
+  if (values.lsRemoteOk !== '1') {
+    const failure = values.lsRemoteClass || 'unknown';
+    if (failure === 'auth') return { status: 'auth-error', reason: 'The remote read test failed with an authentication/authorization error.' };
+    if (failure === 'credential') return { status: 'credential-error', reason: 'The remote read test failed in the credential helper chain.' };
+    if (failure === 'network') return { status: 'network-error', reason: 'The remote read test failed because GitHub was unreachable.' };
+    if (failure === 'timeout') return { status: 'network-error', reason: 'The remote read test timed out.' };
+    return { status: 'remote-error', reason: 'The remote read test failed for an unclassified reason.' };
+  }
+  if (values.remoteProtocol === 'https') {
+    if (values.authenticated !== '1') {
+      return {
+        status: 'auth-warning',
+        reason: 'GitHub can be read, but gh is not authenticated; public-repository reads can succeed anonymously while push still fails.',
+      };
+    }
+    if (!String(values.helpers || '').includes('gh auth git-credential')) {
+      return {
+        status: 'credential-warning',
+        reason: 'GitHub read and gh authentication succeeded, but the gh HTTPS credential helper was not detected.',
+      };
+    }
+  }
+  return {
+    status: 'likely-ready',
+    reason: 'Network, remote read, and detected credential prerequisites are healthy. Write permission is not mutated/tested by Network Doctor.',
+  };
+}
+
 export function normalizeNetworkMode(value, legacyEnableLocalProxy = false) {
   const mode = String(value || '').trim().toLowerCase();
   if (NETWORK_MODES.has(mode)) return mode;
@@ -97,14 +130,20 @@ export async function probeRemoteGithub(host, runtimeBin = '', timeoutMs = 6500)
 
 export async function diagnoseRemoteGitHub(host, workspace = '') {
   const target = String(workspace || '').trim();
-  const script = `set +e\nTARGET=${shellQuote(target)}\nGH_PATH="$(command -v gh 2>/dev/null)"\nGIT_PATH="$(command -v git 2>/dev/null)"\nGH_AUTH=0\nGH_LOGIN=''\nSKIPPED=0\nif [ -z "$TARGET" ]; then SKIPPED=1; fi\nif [ -n "$TARGET" ] && [ -n "$GH_PATH" ] && gh auth status --hostname github.com >/dev/null 2>&1; then\n  GH_AUTH=1\n  GH_LOGIN="$(gh api user --jq .login 2>/dev/null | head -n 1)"\nfi\nIS_REPO=0\nORIGIN=''\nREMOTE_PROTOCOL=''\nHELPERS=''\nLOCAL_HELPERS=''\nBROKEN_HELPER=0\nif [ -n "$GIT_PATH" ] && [ -n "$TARGET" ] && git -C "$TARGET" rev-parse --is-inside-work-tree >/dev/null 2>&1; then\n  IS_REPO=1\n  ORIGIN="$(git -C "$TARGET" remote get-url origin 2>/dev/null | head -n 1)"\n  case "$ORIGIN" in\n    https://github.com/*) REMOTE_PROTOCOL='https' ;;\n    git@github.com:*|ssh://git@github.com/*) REMOTE_PROTOCOL='ssh' ;;\n    *) REMOTE_PROTOCOL='other' ;;\n  esac\n  HELPERS="$( { git -C "$TARGET" config --show-origin --get-all credential.https://github.com.helper 2>/dev/null; git -C "$TARGET" config --show-origin --get-all credential.helper 2>/dev/null; } | tr '\\n' '|' )"\n  LOCAL_HELPERS="$( { git -C "$TARGET" config --local --get-all credential.https://github.com.helper 2>/dev/null; git -C "$TARGET" config --local --get-all credential.helper 2>/dev/null; } | tr '\\n' '|' )"\n  if printf '%s' "$LOCAL_HELPERS" | grep -Fq 'gh auth git-credential ""'; then BROKEN_HELPER=1; fi\nfi\nprintf '${GITHUB_AUTH_PREFIX}skipped=%s\\n' "$SKIPPED"\nprintf '${GITHUB_AUTH_PREFIX}ghPath=%s\\n' "$GH_PATH"\nprintf '${GITHUB_AUTH_PREFIX}gitPath=%s\\n' "$GIT_PATH"\nprintf '${GITHUB_AUTH_PREFIX}authenticated=%s\\n' "$GH_AUTH"\nprintf '${GITHUB_AUTH_PREFIX}login=%s\\n' "$GH_LOGIN"\nprintf '${GITHUB_AUTH_PREFIX}isRepo=%s\\n' "$IS_REPO"\nprintf '${GITHUB_AUTH_PREFIX}origin=%s\\n' "$ORIGIN"\nprintf '${GITHUB_AUTH_PREFIX}remoteProtocol=%s\\n' "$REMOTE_PROTOCOL"\nprintf '${GITHUB_AUTH_PREFIX}helpers=%s\\n' "$HELPERS"\nprintf '${GITHUB_AUTH_PREFIX}brokenHelper=%s\\n' "$BROKEN_HELPER"\nexit 0\n`;
+  const script = `set +e\nTARGET=${shellQuote(target)}\nGH_PATH="$(command -v gh 2>/dev/null)"\nGIT_PATH="$(command -v git 2>/dev/null)"\nGH_VERSION="$([ -n "$GH_PATH" ] && gh --version 2>/dev/null | head -n 1)"\nGIT_VERSION="$([ -n "$GIT_PATH" ] && git --version 2>/dev/null | head -n 1)"\nGH_AUTH=0\nGH_LOGIN=''\nSKIPPED=0\nDNS_OK=0\nDNS_ADDRESS=''\nif command -v getent >/dev/null 2>&1; then DNS_ADDRESS="$(getent ahostsv4 github.com 2>/dev/null | awk 'NR==1 {print $1}')"; fi\nif [ -z "$DNS_ADDRESS" ] && command -v python3 >/dev/null 2>&1; then DNS_ADDRESS="$(python3 -c 'import socket; print(socket.gethostbyname("github.com"))' 2>/dev/null)"; fi\nif [ -n "$DNS_ADDRESS" ]; then DNS_OK=1; fi\nif [ -z "$TARGET" ]; then SKIPPED=1; fi\nif [ -n "$TARGET" ] && [ -n "$GH_PATH" ] && gh auth status --hostname github.com >/dev/null 2>&1; then\n  GH_AUTH=1\n  GH_LOGIN="$(gh api user --jq .login 2>/dev/null | head -n 1)"\nfi\nIS_REPO=0\nORIGIN=''\nREMOTE_PROTOCOL=''\nHELPERS=''\nLOCAL_HELPERS=''\nBROKEN_HELPER=0\nLS_REMOTE_OK=0\nLS_REMOTE_CLASS='skipped'\nif [ -n "$GIT_PATH" ] && [ -n "$TARGET" ] && git -C "$TARGET" rev-parse --is-inside-work-tree >/dev/null 2>&1; then\n  IS_REPO=1\n  ORIGIN="$(git -C "$TARGET" remote get-url origin 2>/dev/null | head -n 1)"\n  case "$ORIGIN" in\n    https://github.com/*) REMOTE_PROTOCOL='https' ;;\n    git@github.com:*|ssh://git@github.com/*) REMOTE_PROTOCOL='ssh' ;;\n    *) REMOTE_PROTOCOL='other' ;;\n  esac\n  HELPERS="$( { git -C "$TARGET" config --show-origin --get-all credential.https://github.com.helper 2>/dev/null; git -C "$TARGET" config --show-origin --get-all credential.helper 2>/dev/null; } | tr '\\n' '|' )"\n  LOCAL_HELPERS="$( { git -C "$TARGET" config --local --get-all credential.https://github.com.helper 2>/dev/null; git -C "$TARGET" config --local --get-all credential.helper 2>/dev/null; } | tr '\\n' '|' )"\n  if printf '%s' "$LOCAL_HELPERS" | grep -Fq 'gh auth git-credential ""'; then BROKEN_HELPER=1; fi\n  if [ -n "$ORIGIN" ]; then\n    ERR_FILE="$(mktemp)"\n    if command -v timeout >/dev/null 2>&1; then\n      timeout 12s git -C "$TARGET" ls-remote --exit-code origin HEAD >/dev/null 2>"$ERR_FILE"\n      LS_CODE=$?\n    else\n      git -C "$TARGET" ls-remote --exit-code origin HEAD >/dev/null 2>"$ERR_FILE"\n      LS_CODE=$?\n    fi\n    if [ "$LS_CODE" -eq 0 ]; then\n      LS_REMOTE_OK=1\n      LS_REMOTE_CLASS='ok'\n    elif [ "$LS_CODE" -eq 124 ]; then\n      LS_REMOTE_CLASS='timeout'\n    elif grep -Eqi 'authentication failed|could not read Username|403|permission denied|repository not found|authentication required' "$ERR_FILE"; then\n      LS_REMOTE_CLASS='auth'\n    elif grep -Eqi 'operation not supported|credential' "$ERR_FILE"; then\n      LS_REMOTE_CLASS='credential'\n    elif grep -Eqi 'could not resolve|failed to connect|timed out|timeout|connection reset|network is unreachable|could not connect|connection refused' "$ERR_FILE"; then\n      LS_REMOTE_CLASS='network'\n    else\n      LS_REMOTE_CLASS='other'\n    fi\n    rm -f "$ERR_FILE"\n  fi\nfi\nprintf '${GITHUB_AUTH_PREFIX}skipped=%s\\n' "$SKIPPED"\nprintf '${GITHUB_AUTH_PREFIX}dnsOk=%s\\n' "$DNS_OK"\nprintf '${GITHUB_AUTH_PREFIX}dnsAddress=%s\\n' "$DNS_ADDRESS"\nprintf '${GITHUB_AUTH_PREFIX}ghPath=%s\\n' "$GH_PATH"\nprintf '${GITHUB_AUTH_PREFIX}ghVersion=%s\\n' "$GH_VERSION"\nprintf '${GITHUB_AUTH_PREFIX}gitPath=%s\\n' "$GIT_PATH"\nprintf '${GITHUB_AUTH_PREFIX}gitVersion=%s\\n' "$GIT_VERSION"\nprintf '${GITHUB_AUTH_PREFIX}authenticated=%s\\n' "$GH_AUTH"\nprintf '${GITHUB_AUTH_PREFIX}login=%s\\n' "$GH_LOGIN"\nprintf '${GITHUB_AUTH_PREFIX}isRepo=%s\\n' "$IS_REPO"\nprintf '${GITHUB_AUTH_PREFIX}origin=%s\\n' "$ORIGIN"\nprintf '${GITHUB_AUTH_PREFIX}remoteProtocol=%s\\n' "$REMOTE_PROTOCOL"\nprintf '${GITHUB_AUTH_PREFIX}helpers=%s\\n' "$HELPERS"\nprintf '${GITHUB_AUTH_PREFIX}brokenHelper=%s\\n' "$BROKEN_HELPER"\nprintf '${GITHUB_AUTH_PREFIX}lsRemoteOk=%s\\n' "$LS_REMOTE_OK"\nprintf '${GITHUB_AUTH_PREFIX}lsRemoteClass=%s\\n' "$LS_REMOTE_CLASS"\nexit 0\n`;
   try {
-    const { stdout } = await runSsh(host, script, { timeoutMs: 20_000, maxBytes: 128 * 1024 });
+    const { stdout } = await runSsh(host, script, { timeoutMs: 30_000, maxBytes: 128 * 1024 });
     const values = parseMarkerLines(stdout, GITHUB_AUTH_PREFIX);
     return {
       skipped: values.skipped === '1',
+      dns: {
+        ok: values.dnsOk === '1',
+        address: values.dnsAddress || undefined,
+      },
       ghAvailable: Boolean(values.ghPath),
+      ghVersion: values.ghVersion || undefined,
       gitAvailable: Boolean(values.gitPath),
+      gitVersion: values.gitVersion || undefined,
       authenticated: values.authenticated === '1',
       login: values.login || undefined,
       isRepository: values.isRepo === '1',
@@ -112,15 +151,25 @@ export async function diagnoseRemoteGitHub(host, workspace = '') {
       remoteProtocol: values.remoteProtocol || undefined,
       credentialHelpers: values.helpers ? values.helpers.split('|').filter(Boolean) : [],
       brokenCredentialHelper: values.brokenHelper === '1',
+      lsRemote: {
+        ok: values.lsRemoteOk === '1',
+        classification: values.lsRemoteClass || 'unknown',
+      },
+      pushReadiness: pushReadiness(values),
+      writePermissionTested: false,
     };
   } catch (error) {
     return {
       skipped: !target,
+      dns: { ok: false },
       ghAvailable: false,
       gitAvailable: false,
       authenticated: false,
       isRepository: false,
       brokenCredentialHelper: false,
+      lsRemote: { ok: false, classification: 'diagnostic-error' },
+      pushReadiness: { status: 'diagnostic-error', reason: 'Remote GitHub diagnostics could not complete.' },
+      writePermissionTested: false,
       error: error instanceof Error ? error.message : String(error),
     };
   }
