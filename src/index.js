@@ -1,44 +1,40 @@
+import { OpenSshEngine } from './engine.js';
 import { RouteManager } from './network.js';
-import { installSystemOpenSshTransport } from './openssh-transport.js';
-import { installProcessProxy } from './process.js';
-import { installRemoteShellBootstrap } from './terminal.js';
+import { allOpenSshTools } from './tools.js';
 
-export const name = 'dsh-ssh-vpn-bridge';
+export const name = 'dsh-openssh-vpn';
+export const inject = ['tools'];
 
-// subprocess belongs to the stock Harness profile and is required for the
-// bridge itself. sshRemote is deliberately NOT a hard plugin dependency:
-// out-of-tree SSH providers can be disabled, removed, or hot-reloaded by the
-// user. A hard `inject = ['sshRemote']` leaves this loader entry permanently
-// pending when the provider is absent and can make the entire profile fail to
-// boot. The nested ctx.inject below activates the transport/network layer only
-// while sshRemote is actually present.
-export const inject = ['subprocess'];
-
-function activateBridge(ctx, config) {
-  // Install this first so the SSH workspace provider keeps its UI, anchors
-  // and routing model while every actual remote data/auth path uses the same
-  // system OpenSSH client as `ssh <alias>`.
-  const restoreTransport = installSystemOpenSshTransport(ctx);
-  const routes = new RouteManager(ctx, config);
-  void routes.start();
-  const restoreProcess = installProcessProxy(ctx, routes);
-  const restoreShell = installRemoteShellBootstrap(ctx, routes);
-
-  return async () => {
-    restoreShell();
-    restoreProcess();
-    await routes.stop();
-    restoreTransport();
-  };
-}
+const GUIDANCE = [
+  'Native OpenSSH SSH/VPN tools are available through openssh_list, openssh_exec, openssh_proxy_status, openssh_upload and openssh_download.',
+  'These tools intentionally use the operating system ssh/scp executables and the user\'s real ~/.ssh/config rather than a second Node ssh2 credential stack.',
+  'For ordinary commands ClearAllForwardings=yes is used so VS Code and Harness do not compete for configured RemoteForward ports.',
+  'Network policy is direct-first; if remote GitHub direct access fails, an already-live RemoteForward targeting the Windows proxy is reused before Harness starts its own reverse tunnel.',
+].join(' ');
 
 export function apply(ctx, config = {}) {
-  // Cordis owns this dependency scope. If sshRemote appears after this plugin
-  // (or is hot-reloaded), the bridge activates automatically; if it
-  // disappears, Cordis disposes the nested scope without taking down Harness.
-  const sshScope = ctx.inject(['sshRemote'], (sshCtx) => activateBridge(sshCtx, config));
+  const routes = new RouteManager(ctx, config);
+  routes.start();
+  const engine = new OpenSshEngine(routes);
+  const disposers = allOpenSshTools(engine).map((tool) => ctx.tools.register(tool));
+
+  let disposePrompt;
+  try {
+    const systemPrompt = ctx.get?.('systemPrompt');
+    if (systemPrompt?.section) {
+      disposePrompt = systemPrompt.section({
+        name: 'plugin:dsh-openssh-vpn',
+        order: 150,
+        text: GUIDANCE,
+      });
+    }
+  } catch {
+    // systemPrompt is optional; the tools remain fully functional without it.
+  }
 
   return async () => {
-    await sshScope.dispose();
+    disposePrompt?.();
+    for (const dispose of disposers.reverse()) dispose?.();
+    await routes.stop();
   };
 }
