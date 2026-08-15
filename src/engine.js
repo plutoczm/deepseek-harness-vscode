@@ -77,7 +77,10 @@ export class OpenSshEngine {
   }
 
   async exec(alias, command, timeoutMs) {
-    await this.routes.ensure(alias);
+    const route = await this.routes.ensure(alias);
+    if (this.routes.mode === 'proxy' && route?.route !== 'proxy') {
+      throw new Error(`forced proxy route unavailable for ${alias}: ${route?.error || route?.source || 'unknown route error'}`);
+    }
     const environment = this.routes.proxyEnv(alias);
     const routedCommand = environment
       ? prefixShellEnvironment(command, environment)
@@ -110,6 +113,8 @@ export class OpenSshEngine {
       sshOk: state?.sshOk,
       localProxyOk: state?.localProxyOk,
       localProxyDetail: state?.localProxyDetail,
+      managedTunnelAlive: state?.managedTunnelAlive,
+      managedTunnelPid: state?.managedTunnelPid,
       error: state?.error,
       resolved,
     };
