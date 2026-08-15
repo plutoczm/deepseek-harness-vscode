@@ -63,8 +63,8 @@ test('health refresh never mistakes its own managed 35052 for an external forwar
 });
 
 test('unexpected managed tunnel exit invalidates the cached proxy route immediately', async () => {
-  let probes = 0;
   let starts = 0;
+  let currentChild;
   const children = [fakeChild(5001), fakeChild(5002)];
   const manager = new RouteManager({}, { mode: 'proxy' }, {
     resolve: async () => parseOpenSshConfig(WINDOWS_SSH_G, 'gdwyy70'),
@@ -72,12 +72,12 @@ test('unexpected managed tunnel exit invalidates the cached proxy route immediat
     probeSsh: async () => ({ ok: true }),
     probeProxy: async (_alias, port) => {
       assert.equal(port, 35052);
-      probes += 1;
-      // Initial external check is absent. Once a managed child exists, its
-      // readiness/health checks succeed.
-      return { ok: probes !== 1 };
+      return { ok: Boolean(currentChild && currentChild.exitCode === null) };
     },
-    startConfiguredTunnel: () => children[starts++],
+    startConfiguredTunnel: () => {
+      currentChild = children[starts++];
+      return currentChild;
+    },
     startExplicitTunnel: () => { throw new Error('fallback must not run'); },
     delay: async () => {},
   });
