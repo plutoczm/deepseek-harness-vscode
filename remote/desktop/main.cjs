@@ -16,6 +16,7 @@ let launcherUrl;
 let launcherPort;
 let instanceLifecycleUnsubscribe;
 const usageSubscriptions = new Map();
+const balanceSubscriptions = new Map();
 
 app.setName(APP_NAME);
 app.setAppUserModelId(APP_ID);
@@ -59,19 +60,21 @@ function usageWidgetScript() {
       const style = document.createElement('style');
       style.id = 'dhr-usage-style';
       style.textContent = \`
-        #dhr-usage-widget{position:fixed;top:12px;right:16px;z-index:2147483646;min-width:250px;max-width:330px;padding:10px 12px;border:1px solid rgba(255,255,255,.10);border-radius:11px;background:rgba(22,23,25,.95);backdrop-filter:blur(16px);box-shadow:0 10px 30px rgba(0,0,0,.25);font:12px/1.4 Inter,Segoe UI,system-ui,sans-serif;color:#e8eaed;pointer-events:auto;user-select:none}
+        #dhr-usage-widget{position:fixed;top:12px;right:16px;z-index:2147483646;min-width:250px;max-width:310px;padding:10px 12px;border:1px solid rgba(255,255,255,.10);border-radius:11px;background:rgba(22,23,25,.95);backdrop-filter:blur(16px);box-shadow:0 10px 30px rgba(0,0,0,.25);font:12px/1.4 Inter,Segoe UI,system-ui,sans-serif;color:#e8eaed;pointer-events:auto;user-select:none}
         #dhr-usage-widget .dhr-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
         #dhr-usage-widget .dhr-title{font-weight:650;color:#f5f6f7}
-        #dhr-usage-widget .dhr-live{display:inline-flex;align-items:center;gap:5px;color:#8b9098;font-size:10px}
-        #dhr-usage-widget .dhr-live:before{content:'';width:6px;height:6px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.12)}
-        #dhr-usage-widget[data-waiting='1'] .dhr-live:before{background:#64748b;box-shadow:none}
-        #dhr-usage-widget .dhr-cost{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-top:7px;padding-top:7px;border-top:1px solid rgba(255,255,255,.07)}
-        #dhr-usage-widget .dhr-cost-label{color:#858a92;font-size:10.5px}
-        #dhr-usage-widget .dhr-cost-value{color:#8fb4ff;font:700 15px/1.3 SFMono-Regular,Consolas,monospace}
-        #dhr-usage-widget .dhr-metrics{display:flex;flex-wrap:wrap;gap:4px 9px;margin-top:6px;color:#9ba0a8;font:10.5px/1.45 SFMono-Regular,Consolas,monospace}
-        #dhr-usage-widget .dhr-metrics b{color:#d7dade;font-weight:600}
-        #dhr-usage-widget .dhr-last{margin-top:5px;color:#737982;font-size:9.5px}
-        #dhr-usage-widget .dhr-model{max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        #dhr-usage-widget .dhr-live{display:inline-flex;align-items:center;gap:5px;color:#9ca3af;font-size:10px}
+        #dhr-usage-widget .dhr-live:before{content:'';width:6px;height:6px;border-radius:50%;background:#64748b}
+        #dhr-usage-widget[data-state='ok'] .dhr-live:before{background:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.12)}
+        #dhr-usage-widget[data-state='empty'] .dhr-live:before{background:#ef4444;box-shadow:0 0 0 3px rgba(239,68,68,.10)}
+        #dhr-usage-widget[data-state='error'] .dhr-live:before{background:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.10)}
+        #dhr-usage-widget[data-state='offline'] .dhr-live:before{background:#64748b;box-shadow:none}
+        #dhr-usage-widget .dhr-values{margin-top:7px;padding-top:7px;border-top:1px solid rgba(255,255,255,.07)}
+        #dhr-usage-widget .dhr-row{display:flex;align-items:baseline;justify-content:space-between;gap:16px;min-height:24px}
+        #dhr-usage-widget .dhr-label{color:#858a92;font-size:10.5px}
+        #dhr-usage-widget .dhr-balance-value{color:#a7c3ff;font:700 15px/1.3 SFMono-Regular,Consolas,monospace}
+        #dhr-usage-widget .dhr-cost-value{color:#d7dade;font:650 13px/1.3 SFMono-Regular,Consolas,monospace}
+        #dhr-usage-widget .dhr-last{margin-top:5px;color:#737982;font-size:9.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       \`;
       document.head.appendChild(style);
     }
@@ -79,53 +82,98 @@ function usageWidgetScript() {
     if (!box) {
       box = document.createElement('div');
       box.id = 'dhr-usage-widget';
-      box.dataset.waiting = '1';
-      box.innerHTML = '<div class="dhr-head"><span class="dhr-title">DeepSeek API</span><span class="dhr-live">等待 usage</span></div><div class="dhr-cost"><span class="dhr-cost-label">当前会话消耗</span><span class="dhr-cost-value">¥0.000000</span></div><div class="dhr-metrics"><span>Input <b>—</b></span><span>Output <b>—</b></span><span>Cache <b>—</b></span></div><div class="dhr-last">跟随 Harness usage 事件即时更新 · 不轮询余额接口</div>';
+      box.dataset.state = 'waiting';
+      box.innerHTML = '<div class="dhr-head"><span class="dhr-title">DeepSeek API</span><span class="dhr-live">获取余额</span></div><div class="dhr-values"><div class="dhr-row"><span class="dhr-label">API 余额</span><span class="dhr-balance-value">—</span></div><div class="dhr-row"><span class="dhr-label">当前会话消耗</span><span class="dhr-cost-value">¥0.000000</span></div></div><div class="dhr-last">余额查询不会调用模型，不消耗 Token</div>';
       document.body.appendChild(box);
     }
-    const compact = (value) => {
-      const n = Number(value || 0);
-      if (n < 1000) return String(Math.round(n));
-      if (n < 1000000) return (n / 1000).toFixed(n < 10000 ? 1 : 0).replace(/\\.0$/,'') + 'K';
-      return (n / 1000000).toFixed(n < 10000000 ? 2 : 1).replace(/\\.0$/,'') + 'M';
-    };
-    const money = (value) => {
+
+    const state = window.__DHR_API_STATE__ || { usage: null, balance: null };
+    window.__DHR_API_STATE__ = state;
+
+    const sessionMoney = (value) => {
       const n = Number(value || 0);
       if (n === 0) return '¥0.000000';
       if (n < 0.000001) return '< ¥0.000001';
       return '¥' + n.toFixed(n < 0.01 ? 6 : 4);
     };
-    window.__DHR_UPDATE_USAGE__ = (payload) => {
+    const balanceMoney = (value, currency) => {
+      if (value === null || value === undefined || !Number.isFinite(Number(value))) return '—';
+      const n = Number(value);
+      const code = String(currency || 'CNY').toUpperCase();
+      if (code === 'CNY') return '¥' + n.toFixed(n < 1 ? 4 : 2);
+      return code + ' ' + n.toFixed(n < 1 ? 4 : 2);
+    };
+    const ageText = (value) => {
+      if (!value) return null;
+      const timestamp = new Date(value).getTime();
+      if (!Number.isFinite(timestamp)) return null;
+      const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+      if (seconds < 3) return '刚刚更新';
+      if (seconds < 60) return seconds + ' 秒前更新';
+      const minutes = Math.floor(seconds / 60);
+      if (minutes < 60) return minutes + ' 分钟前更新';
+      return '较早前更新';
+    };
+    const render = () => {
       const widget = document.getElementById('dhr-usage-widget');
       if (!widget) return;
       const live = widget.querySelector('.dhr-live');
-      const cost = widget.querySelector('.dhr-cost-value');
-      const metrics = widget.querySelectorAll('.dhr-metrics b');
+      const balanceValue = widget.querySelector('.dhr-balance-value');
+      const costValue = widget.querySelector('.dhr-cost-value');
       const note = widget.querySelector('.dhr-last');
-      const session = payload?.session;
-      if (!payload?.available || !session) {
-        widget.dataset.waiting = '1';
-        live.textContent = payload?.active === false ? '已断开' : '等待 usage';
-        cost.textContent = '¥0.000000';
-        metrics[0].textContent = '—';
-        metrics[1].textContent = '—';
-        metrics[2].textContent = '—';
-        note.textContent = payload?.active === false ? 'SSH 已结束 · Harness 会话同步停止' : '模型返回 usage 后立即更新 · 不调用 /user/balance';
-        return;
+      const usage = state.usage;
+      const balance = state.balance;
+      const active = balance?.active !== false && usage?.active !== false;
+
+      if (!active) {
+        widget.dataset.state = 'offline';
+        live.textContent = '已断开';
+      } else if (!balance?.received) {
+        widget.dataset.state = 'waiting';
+        live.textContent = '获取余额';
+      } else if (!balance?.ok) {
+        widget.dataset.state = 'error';
+        live.textContent = '无法获取';
+      } else if (balance?.available === false) {
+        widget.dataset.state = 'empty';
+        live.textContent = '余额不足';
+      } else {
+        widget.dataset.state = 'ok';
+        live.textContent = '可用';
       }
-      widget.dataset.waiting = payload?.active === false ? '1' : '0';
-      live.textContent = payload?.active === false ? '已断开' : '实时事件';
-      cost.textContent = session.pricingKnown ? money(session.costCny) : money(session.costCny) + ' + 未定价';
-      metrics[0].textContent = compact(session.inputTokens);
-      metrics[1].textContent = compact(session.outputTokens);
-      metrics[2].textContent = session.cacheHitPercent == null ? '—' : Math.round(session.cacheHitPercent) + '%';
-      const last = session.last || {};
-      const lastCost = last.pricingKnown ? money(last.costCny) : '未定价';
-      const model = session.model || 'unknown model';
-      note.textContent = payload?.active === false
-        ? 'SSH 已结束 · Harness 会话同步停止'
-        : model + ' · 本次 ' + lastCost + ' · ' + (session.requests || 0) + ' 次 usage';
+
+      balanceValue.textContent = balanceMoney(balance?.total, balance?.currency);
+      const session = usage?.session;
+      costValue.textContent = session
+        ? (session.pricingKnown ? sessionMoney(session.costCny) : sessionMoney(session.costCny) + ' + 未定价')
+        : '¥0.000000';
+
+      const age = ageText(balance?.fetchedAt);
+      if (!active) {
+        note.textContent = age ? '余额 ' + age + ' · Harness 已断开' : 'Harness 已断开';
+      } else if (balance?.error) {
+        note.textContent = balance.error;
+      } else if (age) {
+        note.textContent = '余额 ' + age + ' · 查询不消耗 Token';
+      } else {
+        note.textContent = '余额查询不会调用模型，不消耗 Token';
+      }
+      widget.title = balance?.error || '';
     };
+
+    window.__DHR_UPDATE_USAGE__ = (payload) => {
+      state.usage = payload || null;
+      render();
+    };
+    window.__DHR_UPDATE_BALANCE__ = (payload) => {
+      state.balance = payload || null;
+      render();
+    };
+
+    if (!window.__DHR_API_CLOCK__) {
+      window.__DHR_API_CLOCK__ = setInterval(render, 1000);
+    }
+    render();
   })();`;
 }
 
@@ -149,6 +197,14 @@ async function pushUsageSnapshot(contents, snapshot) {
   ).catch(() => undefined);
 }
 
+async function pushBalanceSnapshot(contents, snapshot) {
+  if (contents.isDestroyed()) return;
+  await contents.executeJavaScript(
+    `window.__DHR_UPDATE_BALANCE__?.(${JSON.stringify(snapshot || { received: false, active: true })})`,
+    true,
+  ).catch(() => undefined);
+}
+
 async function attachUsageOverlay(contents) {
   if (contents.isDestroyed()) return;
   let url;
@@ -159,22 +215,40 @@ async function attachUsageOverlay(contents) {
   const instance = findInstanceForContents(contents);
   if (!instance) return;
 
-  await pushUsageSnapshot(contents, remoteModule.manager.usage(instance.id));
+  await Promise.all([
+    pushUsageSnapshot(contents, remoteModule.manager.usage(instance.id)),
+    pushBalanceSnapshot(contents, remoteModule.manager.balance(instance.id)),
+  ]);
 
-  const existing = usageSubscriptions.get(contents.id);
-  if (existing?.instanceId === instance.id) return;
-  existing?.unsubscribe?.();
+  const existingUsage = usageSubscriptions.get(contents.id);
+  if (existingUsage?.instanceId !== instance.id) {
+    existingUsage?.unsubscribe?.();
+    const unsubscribe = remoteModule.manager.onUsage(instance.id, (snapshot) => {
+      pushUsageSnapshot(contents, snapshot).catch(() => undefined);
+    });
+    usageSubscriptions.set(contents.id, { instanceId: instance.id, unsubscribe });
+  }
 
-  const unsubscribe = remoteModule.manager.onUsage(instance.id, (snapshot) => {
-    pushUsageSnapshot(contents, snapshot).catch(() => undefined);
-  });
-  usageSubscriptions.set(contents.id, { instanceId: instance.id, unsubscribe });
+  const existingBalance = balanceSubscriptions.get(contents.id);
+  if (existingBalance?.instanceId !== instance.id) {
+    existingBalance?.unsubscribe?.();
+    const unsubscribe = remoteModule.manager.onBalance(instance.id, (snapshot) => {
+      pushBalanceSnapshot(contents, snapshot).catch(() => undefined);
+    });
+    balanceSubscriptions.set(contents.id, { instanceId: instance.id, unsubscribe });
+  }
 
-  contents.once('destroyed', () => {
-    const current = usageSubscriptions.get(contents.id);
-    current?.unsubscribe?.();
-    usageSubscriptions.delete(contents.id);
-  });
+  if (!contents.__dhrTelemetryCleanupBound) {
+    contents.__dhrTelemetryCleanupBound = true;
+    contents.once('destroyed', () => {
+      const usage = usageSubscriptions.get(contents.id);
+      usage?.unsubscribe?.();
+      usageSubscriptions.delete(contents.id);
+      const balance = balanceSubscriptions.get(contents.id);
+      balance?.unsubscribe?.();
+      balanceSubscriptions.delete(contents.id);
+    });
+  }
 }
 
 function closeHarnessWindowsForInstance(instance) {
@@ -184,6 +258,7 @@ function closeHarnessWindowsForInstance(instance) {
     const matched = findInstanceForContents(window.webContents);
     if (matched?.id !== instance.id) continue;
     pushUsageSnapshot(window.webContents, remoteModule.manager.usage(instance.id)).catch(() => undefined);
+    pushBalanceSnapshot(window.webContents, remoteModule.manager.balance(instance.id)).catch(() => undefined);
     setTimeout(() => {
       if (!window.isDestroyed()) window.close();
     }, 120);
@@ -309,6 +384,8 @@ async function stopEmbeddedLauncher() {
   instanceLifecycleUnsubscribe = undefined;
   for (const subscription of usageSubscriptions.values()) subscription.unsubscribe?.();
   usageSubscriptions.clear();
+  for (const subscription of balanceSubscriptions.values()) subscription.unsubscribe?.();
+  balanceSubscriptions.clear();
   await remoteModule?.manager?.stopAll?.().catch(() => undefined);
   const server = remoteModule?.server;
   if (!server?.listening) return;
