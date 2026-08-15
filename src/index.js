@@ -6,6 +6,7 @@ import {
   listRemoteWorkspaces,
   openRemoteWorkspace,
 } from './remote-workspace.js';
+import { connectRemoteWorkspace } from './remote-session.js';
 
 export const name = 'dsh-openssh-vpn';
 export const inject = ['tools', 'webServer'];
@@ -118,6 +119,14 @@ function registerWebApi(ctx, routes, engine) {
           if (!remotePath) return sendJson(res, 400, { ok: false, error: 'remotePath is required' });
           const workspace = await openRemoteWorkspace(ctx, engine, alias, remotePath);
           return sendJson(res, 200, workspace);
+        }
+
+        if (req.method === 'POST' && path === `${API}/workspace/connect`) {
+          const body = await readJson(req);
+          const workspaceId = String(body.workspaceId || '').trim();
+          if (!workspaceId) return sendJson(res, 400, { ok: false, error: 'workspaceId is required' });
+          const connected = await connectRemoteWorkspace(ctx, workspaceId);
+          return sendJson(res, 200, connected);
         }
 
         return sendJson(res, 404, { ok: false, error: 'unknown api' });
