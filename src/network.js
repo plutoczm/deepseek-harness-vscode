@@ -48,15 +48,19 @@ function resultError(result, fallback) {
   return result?.stderr?.trim() || result?.error || fallback;
 }
 
+function isManagedSource(source) {
+  return typeof source === 'string' && source.startsWith('managed-');
+}
+
 /**
  * Network policy for one or more native OpenSSH aliases.
  *
  * Priority in auto mode:
  * 1. remote GitHub direct;
- * 2. an already-live RemoteForward from `ssh -G` (for example VS Code's
- *    gdwyy70:35052 -> Windows 127.0.0.1:7890);
- * 3. verify that a fresh authenticated SSH exec still works;
- * 4. start exactly one configured-forward owner when a matching RemoteForward
+ * 2. a healthy reverse tunnel already owned by this RouteManager;
+ * 3. an already-live external RemoteForward from `ssh -G`;
+ * 4. verify that a fresh authenticated SSH exec still works;
+ * 5. start exactly one configured-forward owner when a matching RemoteForward
  *    exists, otherwise create a verified reverse-forward candidate at 17890+.
  *
  * Ordinary SSH exec/probe calls are made with ClearAllForwardings=yes by
@@ -112,6 +116,8 @@ export class RouteManager {
       localProxyOk: state.localProxyOk,
       localProxyDetail: state.localProxyDetail,
       configuredForward: state.configuredForward,
+      managedTunnelAlive: childAlive(state.tunnel),
+      managedTunnelPid: childAlive(state.tunnel) ? state.tunnel?.pid : undefined,
       lastCheckedAt: state.lastCheckedAt,
       error: state.error,
     }));
@@ -137,7 +143,12 @@ export class RouteManager {
     if (!key) throw new Error('SSH alias is required');
     const existing = this.states.get(key);
     if (existing?.checking) return existing.checking;
-    if (!force && existing && Date.now() - (existing.lastCheckedAt || 0) < 15_000) return existing;
+
+    const recent = existing && Date.now() - (existing.lastCheckedAt || 0) < 15_000;
+    const deadManagedTunnel = existing?.route === 'proxy'
+      && isManagedSource(existing.source)
+      && !childAlive(existing.tunnel);
+    if (!force && recent && existing.route !== 'unavailable' && !deadManagedTunnel) return existing;
 
     const state = existing || { alias: key, route: 'checking' };
     this.states.set(key, state);
@@ -190,15 +201,28 @@ export class RouteManager {
       return state;
     }
 
+    // A tunnel owned by this RouteManager must be checked before probing for an
+    // "external" configured forward. Otherwise our own 35052 looks external,
+    // gets classified as existing-config-forward, and stopManagedTunnel() kills
+    // the very tunnel that made the probe succeed.
+    if (childAlive(state.tunnel) && state.remotePort) {
+      const healthy = await this.adapters.probeProxy(alias, state.remotePort, this.config.probeTimeoutMs);
+      if (healthy?.ok) {
+        state.route = 'proxy';
+        state.source = state.tunnelSource || 'managed';
+        state.sshOk = true;
+        state.error = undefined;
+        return state;
+      }
+      this.stopManagedTunnel(state);
+    }
+
     // If an external process (for example VS Code Remote SSH) already owns the
     // configured RemoteForward and it works end-to-end, that is authoritative.
-    // Probe it before requiring a separate local proxy check so we do not
-    // disturb a working external tunnel.
     const configured = state.configuredForward;
     if (configured) {
       const existingProxy = await this.adapters.probeProxy(alias, configured.listenPort, this.config.probeTimeoutMs);
       if (existingProxy?.ok) {
-        this.stopManagedTunnel(state);
         state.route = 'proxy';
         state.source = 'existing-config-forward';
         state.remotePort = configured.listenPort;
@@ -229,17 +253,6 @@ export class RouteManager {
       state.error = `SSH baseline unavailable: ${resultError(baseline, 'authenticated SSH exec failed')}`;
       this.log(`${alias}: ${state.error}`);
       return state;
-    }
-
-    // A tunnel process we own may already be healthy. Reuse it first.
-    if (childAlive(state.tunnel) && state.remotePort) {
-      const healthy = await this.adapters.probeProxy(alias, state.remotePort, this.config.probeTimeoutMs);
-      if (healthy?.ok) {
-        state.route = 'proxy';
-        state.source = state.tunnelSource || 'managed';
-        return state;
-      }
-      this.stopManagedTunnel(state);
     }
 
     if (configured) {
@@ -293,7 +306,13 @@ export class RouteManager {
     child.once?.('exit', () => {
       if (state.tunnel !== child) return;
       state.tunnel = undefined;
-      if (!state.stopping && !this.stopped && state.route === 'proxy') {
+      state.tunnelSource = undefined;
+      if (!state.stopping && !this.stopped) {
+        state.route = 'unavailable';
+        state.source = 'managed-tunnel-exited';
+        state.remotePort = undefined;
+        state.sshOk = undefined;
+        state.lastCheckedAt = 0;
         state.error = stderr.trim() || 'managed SSH reverse tunnel exited';
         setTimeout(() => void this.ensure(state.alias, { force: true }), 1500).unref?.();
       }
