@@ -31,6 +31,14 @@ function execText(file, args = [], timeout = 5000) {
   });
 }
 
+function shellText(command, timeout = 5000) {
+  if (process.platform !== 'win32') {
+    const [file, ...args] = command.split(' ');
+    return execText(file, args, timeout);
+  }
+  return execText(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', command], timeout);
+}
+
 async function commandPath(command) {
   const finder = process.platform === 'win32' ? 'where' : 'which';
   const output = await execText(finder, [command], 3000);
@@ -40,11 +48,11 @@ async function commandPath(command) {
 export async function checkLocalRuntime() {
   const [nodePath, npxPath, node, npm, python, conda] = await Promise.all([
     commandPath('node'),
-    commandPath(process.platform === 'win32' ? 'npx.cmd' : 'npx'),
+    commandPath('npx'),
     execText('node', ['--version']),
-    execText(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['--version']),
+    process.platform === 'win32' ? shellText('npm --version') : execText('npm', ['--version']),
     execText(process.platform === 'win32' ? 'python.exe' : 'python3', ['--version']),
-    execText(process.platform === 'win32' ? 'conda.exe' : 'conda', ['--version']),
+    process.platform === 'win32' ? shellText('conda --version') : execText('conda', ['--version']),
   ]);
   return {
     hostname: 'Local',
@@ -149,13 +157,14 @@ export class LocalHarnessManager extends HarnessManager {
       instance.status = 'starting';
       this.emitInstanceStatus(instance);
 
-      const npx = runtime.npxPath || (process.platform === 'win32' ? 'npx.cmd' : 'npx');
+      const npx = runtime.npxPath || 'npx';
       const child = spawn(npx, [
         '--yes', '@deepseek-ai/dsh', '--profile', 'web', '--patch', patchPath, '--port', String(localPort),
       ], {
         cwd: workspace,
         env: { ...process.env, DSH_HOME: dshHome },
         windowsHide: true,
+        shell: process.platform === 'win32',
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       instance.child = child;
