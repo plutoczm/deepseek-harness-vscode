@@ -1,6 +1,6 @@
-# VPN/stability bridge only.
-# The SSH workspace provider must be installed explicitly as a top-level
-# Harness plugin, so this patch must not insert dsh-ssh-remote again.
+# Standalone native OpenSSH + Windows VPN routing plugin.
+# No second SSH provider is required: the plugin uses the operating system
+# ssh/scp executables and the user's real ~/.ssh/config directly.
 - insert:
-    - id: dsh-ssh-vpn-bridge
-      name: dsh-ssh-vpn-bridge
+    - id: dsh-openssh-vpn
+      name: dsh-openssh-vpn
