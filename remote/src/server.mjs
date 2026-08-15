@@ -17,7 +17,13 @@ import { LocalHarnessManager, checkLocalRuntime, listLocalDirectories } from './
 import { UnifiedHarnessManager } from './unified-manager.mjs';
 import { appearanceStore } from './appearance.mjs';
 import { recentWorkspaceStore } from './recent-workspaces.mjs';
-import { checkRemote, installPrivateNode22, listRemoteDirectories } from './ssh.mjs';
+import {
+  diagnoseRemoteGitHub,
+  probeLocalHttpProxy,
+  probeRemoteGithub,
+  repairRemoteGitCredential,
+} from './network.mjs';
+import { checkRemote, installPrivateNode22, listRemoteDirectories, resolveRemoteNode } from './ssh.mjs';
 import { TerminalManager, terminalProfiles } from './terminal-manager.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -219,6 +225,36 @@ function terminalIdFrom(pathname) {
   return /^\/api\/terminals\/([^/]+)$/u.exec(pathname)?.[1];
 }
 
+function runtimeBinForProbe(runtime) {
+  let runtimeBin = runtime?.path;
+  if (runtimeBin?.startsWith('$HOME/') && runtime?.info?.home) {
+    runtimeBin = `${runtime.info.home}/${runtimeBin.slice('$HOME/'.length)}`;
+  }
+  return runtimeBin || '';
+}
+
+async function githubNetworkDiagnostics(host, workspace) {
+  const localProxyPromise = probeLocalHttpProxy();
+  const githubAuthPromise = diagnoseRemoteGitHub(host, workspace);
+  let direct;
+  try {
+    const runtime = await resolveRemoteNode(host, { installIfMissing: false });
+    const runtimeBin = runtimeBinForProbe(runtime);
+    direct = runtimeBin
+      ? await probeRemoteGithub(host, runtimeBin)
+      : { ok: false, error: 'Remote Node runtime is unavailable for the direct GitHub probe.', route: 'remote-direct' };
+  } catch (error) {
+    direct = { ok: false, error: error instanceof Error ? error.message : String(error), route: 'remote-direct' };
+  }
+  const [localProxy, github] = await Promise.all([localProxyPromise, githubAuthPromise]);
+  return {
+    direct,
+    localProxy,
+    github,
+    recommendation: direct.ok ? 'direct' : (localProxy.ok ? 'local-proxy' : 'direct-unavailable'),
+  };
+}
+
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`);
   try {
@@ -269,6 +305,19 @@ const server = http.createServer(async (request, response) => {
       if (key) await recentWorkspaceStore.remove(key);
       else await recentWorkspaceStore.clear();
       json(response, 200, { items: await recentWorkspaceStore.get() });
+      return;
+    }
+
+    if (url.pathname === '/api/network/check' && request.method === 'POST') {
+      const body = await readJson(request);
+      json(response, 200, await githubNetworkDiagnostics(body.host, body.workspace));
+      return;
+    }
+
+    if (url.pathname === '/api/github/repair-credential' && request.method === 'POST') {
+      const body = await readJson(request);
+      const github = await repairRemoteGitCredential(body.host, body.workspace);
+      json(response, 200, { ok: true, github });
       return;
     }
 
@@ -347,7 +396,7 @@ const server = http.createServer(async (request, response) => {
           host: body.host,
           workspace: body.workspace,
           installRuntime: body.installRuntime !== false,
-          enableLocalProxy: body.enableLocalProxy === true,
+          enableLocalProxy: body.networkMode === 'local-proxy' || body.enableLocalProxy === true,
         }));
       } catch (error) {
         json(response, 500, {

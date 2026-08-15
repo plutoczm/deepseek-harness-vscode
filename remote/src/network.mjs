@@ -4,6 +4,9 @@ import { findRemoteFreePort, runSsh } from './ssh.mjs';
 
 const DEFAULT_PROXY_HOST = process.env.DSH_LOCAL_PROXY_HOST || '127.0.0.1';
 const DEFAULT_PROXY_PORT = Number(process.env.DSH_LOCAL_PROXY_PORT || 7890);
+const GITHUB_PROBE_PREFIX = '__DHR_GITHUB__';
+const GITHUB_AUTH_PREFIX = '__DHR_GH_AUTH__';
+const NETWORK_MODES = new Set(['auto', 'direct', 'local-proxy']);
 
 function safeInstanceId(value) {
   return String(value).replace(/[^A-Za-z0-9._-]/gu, '_');
@@ -11,6 +14,30 @@ function safeInstanceId(value) {
 
 function shellQuote(value) {
   return `'${String(value).replaceAll("'", "'\"'\"'")}'`;
+}
+
+function boundedTimeout(value, fallback = 6500) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(1500, Math.min(20_000, Math.round(number)));
+}
+
+function parseMarkerLines(text, prefix) {
+  const result = {};
+  for (const line of String(text || '').split(/\r?\n/u)) {
+    if (!line.startsWith(prefix)) continue;
+    const payload = line.slice(prefix.length);
+    const index = payload.indexOf('=');
+    if (index <= 0) continue;
+    result[payload.slice(0, index)] = payload.slice(index + 1);
+  }
+  return result;
+}
+
+export function normalizeNetworkMode(value, legacyEnableLocalProxy = false) {
+  const mode = String(value || '').trim().toLowerCase();
+  if (NETWORK_MODES.has(mode)) return mode;
+  return legacyEnableLocalProxy ? 'local-proxy' : 'auto';
 }
 
 export function probeLocalHttpProxy(host = DEFAULT_PROXY_HOST, port = DEFAULT_PROXY_PORT, timeoutMs = 3500) {
@@ -40,6 +67,72 @@ export function probeLocalHttpProxy(host = DEFAULT_PROXY_HOST, port = DEFAULT_PR
   });
 }
 
+export async function probeRemoteGithub(host, runtimeBin = '', timeoutMs = 6500) {
+  const timeout = boundedTimeout(timeoutMs);
+  const pathPrefix = runtimeBin ? `export PATH=${shellQuote(runtimeBin)}:"$PATH"\n` : '';
+  const nodeScript = `const https = require('node:https');\nconst started = Date.now();\nlet done = false;\nconst finish = (payload) => { if (done) return; done = true; console.log(${JSON.stringify(GITHUB_PROBE_PREFIX)} + JSON.stringify({ ...payload, latencyMs: Date.now() - started })); };\nconst request = https.request('https://github.com/', { method: 'HEAD', headers: { 'user-agent': 'DeepSeek-Harness-Desktop' } }, (response) => {\n  const status = Number(response.statusCode || 0);\n  finish({ ok: status >= 200 && status < 500, status });\n  response.resume();\n});\nrequest.setTimeout(${timeout}, () => request.destroy(new Error('timeout')));\nrequest.on('error', (error) => finish({ ok: false, error: error.message || String(error) }));\nrequest.end();\nsetTimeout(() => finish({ ok: false, error: 'timeout' }), ${timeout + 250}).unref?.();\n`;
+  try {
+    const { stdout } = await runSsh(host, `${pathPrefix}node - <<'NODE'\n${nodeScript}NODE\n`, {
+      timeoutMs: timeout + 5000,
+      maxBytes: 64 * 1024,
+    });
+    const line = stdout.split(/\r?\n/u).findLast((item) => item.startsWith(GITHUB_PROBE_PREFIX));
+    if (!line) return { ok: false, error: 'GitHub probe returned no result.' };
+    const parsed = JSON.parse(line.slice(GITHUB_PROBE_PREFIX.length));
+    return {
+      ok: Boolean(parsed.ok),
+      status: Number.isFinite(Number(parsed.status)) ? Number(parsed.status) : undefined,
+      latencyMs: Number.isFinite(Number(parsed.latencyMs)) ? Number(parsed.latencyMs) : undefined,
+      error: parsed.error ? String(parsed.error) : undefined,
+      route: 'remote-direct',
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+      route: 'remote-direct',
+    };
+  }
+}
+
+export async function diagnoseRemoteGitHub(host, workspace = '') {
+  const target = String(workspace || '').trim();
+  const script = `set +e\nTARGET=${shellQuote(target)}\nGH_PATH="$(command -v gh 2>/dev/null)"\nGIT_PATH="$(command -v git 2>/dev/null)"\nGH_AUTH=0\nGH_LOGIN=''\nSKIPPED=0\nif [ -z "$TARGET" ]; then SKIPPED=1; fi\nif [ -n "$TARGET" ] && [ -n "$GH_PATH" ] && gh auth status --hostname github.com >/dev/null 2>&1; then\n  GH_AUTH=1\n  GH_LOGIN="$(gh api user --jq .login 2>/dev/null | head -n 1)"\nfi\nIS_REPO=0\nORIGIN=''\nREMOTE_PROTOCOL=''\nHELPERS=''\nLOCAL_HELPERS=''\nBROKEN_HELPER=0\nif [ -n "$GIT_PATH" ] && [ -n "$TARGET" ] && git -C "$TARGET" rev-parse --is-inside-work-tree >/dev/null 2>&1; then\n  IS_REPO=1\n  ORIGIN="$(git -C "$TARGET" remote get-url origin 2>/dev/null | head -n 1)"\n  case "$ORIGIN" in\n    https://github.com/*) REMOTE_PROTOCOL='https' ;;\n    git@github.com:*|ssh://git@github.com/*) REMOTE_PROTOCOL='ssh' ;;\n    *) REMOTE_PROTOCOL='other' ;;\n  esac\n  HELPERS="$( { git -C "$TARGET" config --show-origin --get-all credential.https://github.com.helper 2>/dev/null; git -C "$TARGET" config --show-origin --get-all credential.helper 2>/dev/null; } | tr '\\n' '|' )"\n  LOCAL_HELPERS="$( { git -C "$TARGET" config --local --get-all credential.https://github.com.helper 2>/dev/null; git -C "$TARGET" config --local --get-all credential.helper 2>/dev/null; } | tr '\\n' '|' )"\n  if printf '%s' "$LOCAL_HELPERS" | grep -Fq 'gh auth git-credential ""'; then BROKEN_HELPER=1; fi\nfi\nprintf '${GITHUB_AUTH_PREFIX}skipped=%s\\n' "$SKIPPED"\nprintf '${GITHUB_AUTH_PREFIX}ghPath=%s\\n' "$GH_PATH"\nprintf '${GITHUB_AUTH_PREFIX}gitPath=%s\\n' "$GIT_PATH"\nprintf '${GITHUB_AUTH_PREFIX}authenticated=%s\\n' "$GH_AUTH"\nprintf '${GITHUB_AUTH_PREFIX}login=%s\\n' "$GH_LOGIN"\nprintf '${GITHUB_AUTH_PREFIX}isRepo=%s\\n' "$IS_REPO"\nprintf '${GITHUB_AUTH_PREFIX}origin=%s\\n' "$ORIGIN"\nprintf '${GITHUB_AUTH_PREFIX}remoteProtocol=%s\\n' "$REMOTE_PROTOCOL"\nprintf '${GITHUB_AUTH_PREFIX}helpers=%s\\n' "$HELPERS"\nprintf '${GITHUB_AUTH_PREFIX}brokenHelper=%s\\n' "$BROKEN_HELPER"\nexit 0\n`;
+  try {
+    const { stdout } = await runSsh(host, script, { timeoutMs: 20_000, maxBytes: 128 * 1024 });
+    const values = parseMarkerLines(stdout, GITHUB_AUTH_PREFIX);
+    return {
+      skipped: values.skipped === '1',
+      ghAvailable: Boolean(values.ghPath),
+      gitAvailable: Boolean(values.gitPath),
+      authenticated: values.authenticated === '1',
+      login: values.login || undefined,
+      isRepository: values.isRepo === '1',
+      origin: values.origin || undefined,
+      remoteProtocol: values.remoteProtocol || undefined,
+      credentialHelpers: values.helpers ? values.helpers.split('|').filter(Boolean) : [],
+      brokenCredentialHelper: values.brokenHelper === '1',
+    };
+  } catch (error) {
+    return {
+      skipped: !target,
+      ghAvailable: false,
+      gitAvailable: false,
+      authenticated: false,
+      isRepository: false,
+      brokenCredentialHelper: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+export async function repairRemoteGitCredential(host, workspace = '') {
+  const target = String(workspace || '').trim();
+  const script = `set -e\nTARGET=${shellQuote(target)}\ncommand -v gh >/dev/null 2>&1 || { echo 'GitHub CLI (gh) is not installed on the remote server.' >&2; exit 2; }\ngh auth status --hostname github.com >/dev/null 2>&1 || { echo 'GitHub CLI is not authenticated for github.com.' >&2; exit 3; }\nif [ -n "$TARGET" ] && git -C "$TARGET" rev-parse --is-inside-work-tree >/dev/null 2>&1; then\n  LOCAL_GENERIC="$(git -C "$TARGET" config --local --get-all credential.helper 2>/dev/null || true)"\n  LOCAL_GITHUB="$(git -C "$TARGET" config --local --get-all credential.https://github.com.helper 2>/dev/null || true)"\n  if printf '%s\\n%s' "$LOCAL_GENERIC" "$LOCAL_GITHUB" | grep -Fq 'gh auth git-credential ""'; then\n    git -C "$TARGET" config --local --unset-all credential.helper '.*gh auth git-credential "".*' >/dev/null 2>&1 || true\n    git -C "$TARGET" config --local --unset-all credential.https://github.com.helper '.*gh auth git-credential "".*' >/dev/null 2>&1 || true\n  fi\nfi\ngh auth setup-git --hostname github.com\n`;
+  await runSsh(host, script, { timeoutMs: 20_000, maxBytes: 128 * 1024 });
+  return diagnoseRemoteGitHub(host, target);
+}
+
 async function writeRemoteProxyEnvironment(host, instanceId, proxyUrl) {
   const safeId = safeInstanceId(instanceId);
   const quotedProxy = shellQuote(proxyUrl);
@@ -56,7 +149,7 @@ export async function startLocalProxyBridge({ host, instanceId, runtimeBin, onLo
   const probe = await probeLocalHttpProxy(localProxyHost, localProxyPort);
   if (!probe.ok) {
     onLog?.(`[network] Local proxy ${localProxyHost}:${localProxyPort} is unavailable (${probe.detail || 'probe failed'}); remote Bash traffic will use the server network directly.\n`);
-    return { enabled: false, localProxyHost, localProxyPort };
+    return { enabled: false, mode: 'remote-direct', localProxyHost, localProxyPort, proxyProbe: probe };
   }
 
   const remoteProxyPort = await findRemoteFreePort(host, runtimeBin);
@@ -110,6 +203,7 @@ export async function startLocalProxyBridge({ host, instanceId, runtimeBin, onLo
     localProxyPort,
     remoteProxyPort,
     proxyUrl,
+    proxyProbe: probe,
     child,
   };
 }

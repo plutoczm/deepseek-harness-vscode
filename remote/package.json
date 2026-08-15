@@ -1,8 +1,8 @@
 {
   "name": "deepseek-harness-remote",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "private": true,
-  "description": "DeepSeek Harness Desktop workbench with Local and SSH execution, integrated PTY terminals, remote file/PDF viewing, live API balance, event-driven session cost, recent workspaces, and persistent Harness appearance controls.",
+  "description": "DeepSeek Harness Desktop workbench with Local and SSH execution, integrated PTY terminals, automatic GitHub network fallback, remote file/PDF viewing, live API balance, event-driven session cost, recent workspaces, and persistent Harness appearance controls.",
   "main": "desktop/main.cjs",
   "type": "module",
   "engines": {
