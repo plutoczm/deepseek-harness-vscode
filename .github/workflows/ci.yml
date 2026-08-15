@@ -24,7 +24,7 @@ jobs:
         run: npm test
       - name: Verify standalone bundle payload
         run: |
-          node -e "const p=require('./package.json'); if(p.name!=='dsh-openssh-vpn') throw new Error('wrong package name'); if(!p.dsh?.bundle?.patch) throw new Error('missing dsh.bundle'); if(!p.dsh?.client || p.dsh.client.platform!=='web') throw new Error('missing dsh.client web declaration'); if(p.exports?.['./client']!=='./client.js') throw new Error('missing client export'); if(p.dependencies && Object.keys(p.dependencies).length) throw new Error('runtime dependencies are intentionally unnecessary')"
+          node -e "const p=require('./package.json'); if(p.name!=='dsh-openssh-vpn') throw new Error('wrong package name'); if(!p.dsh?.bundle?.patch) throw new Error('missing dsh.bundle'); if(!p.dsh?.client || p.dsh.client.platform!=='web') throw new Error('missing dsh.client web declaration'); if(p.exports?.['./client']!=='./client.js') throw new Error('missing client export'); if(p.exports?.['./remote-tools']!=='./src/remote-tools.js') throw new Error('missing remote-tools export'); if(p.dependencies && Object.keys(p.dependencies).length) throw new Error('runtime dependencies are intentionally unnecessary')"
           test -f cordis.patch.yml
           test -f client.js
           test -f src/index.js
@@ -32,6 +32,9 @@ jobs:
           test -f src/network.js
           test -f src/engine.js
           test -f src/tools.js
+          test -f src/runtime.js
+          test -f src/remote-workspace.js
+          test -f src/remote-tools.js
           ! grep -R "sshRemote" src package.json cordis.patch.yml client.js
           ! grep -R "dsh-ssh-remote" src package.json cordis.patch.yml client.js
       - name: Smoke-test packaged plugin with official Harness
@@ -47,6 +50,11 @@ jobs:
           # One package only: no secondary SSH provider and no Git subdependency.
           npx --yes @deepseek-ai/dsh plugin --profile web add "$package_path"
           npx --yes @deepseek-ai/dsh web --dump-default-config | grep -q 'dsh-openssh-vpn'
+
+          # The generated remote preset resolves this bare package subpath from
+          # the Web profile's host composition. Prove the packaged export exists.
+          profile="$DSH_HOME/profiles/web"
+          (cd "$profile" && node --input-type=module -e "await import('dsh-openssh-vpn/remote-tools')")
 
           log="$RUNNER_TEMP/dsh-openssh-vpn-${{ matrix.node }}.log"
           npx --yes @deepseek-ai/dsh --profile web --port 33082 >"$log" 2>&1 &
@@ -75,6 +83,7 @@ jobs:
           fi
 
           curl -fsS -H 'X-DSH-OpenSSH-VPN: 1' http://127.0.0.1:33082/dsh-openssh-vpn/api/health | grep -q '"ok":true'
+          curl -fsS -H 'X-DSH-OpenSSH-VPN: 1' http://127.0.0.1:33082/dsh-openssh-vpn/api/workspaces | grep -q '"ok":true'
           ! grep -Eqi 'dsh-openssh-vpn.*(error|failed)|client.*dsh-openssh-vpn.*(error|failed)' "$log"
 
           cleanup
@@ -107,4 +116,6 @@ jobs:
           $package = (npm pack --silent | Select-Object -Last 1).Trim()
           if (-not (Test-Path $package)) { throw "npm pack did not create $package" }
           tar -tf $package | Select-String 'package/client.js' | Out-Null
+          tar -tf $package | Select-String 'package/src/remote-tools.js' | Out-Null
+          tar -tf $package | Select-String 'package/src/remote-workspace.js' | Out-Null
           Write-Host "Packed: $package"
