@@ -3,14 +3,16 @@ const http = require('node:http');
 const net = require('node:net');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { createAppearanceBridge } = require('./appearance.cjs');
 
 const APP_ID = 'io.github.plutoczm.deepseek-harness-remote';
-const APP_NAME = 'DeepSeek Harness Remote';
+const APP_NAME = 'DeepSeek Harness Desktop';
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost']);
 const TERMINAL_INSTANCE_STATUSES = new Set(['stopped', 'error']);
 
 let mainWindow;
 let remoteModule;
+let appearanceBridge;
 let quitting = false;
 let launcherUrl;
 let launcherPort;
@@ -49,6 +51,16 @@ function isLoopbackUrl(value) {
 function isSafeExternalUrl(value) {
   try {
     return new URL(value).protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function isHarnessContents(contents) {
+  if (!contents || contents.isDestroyed()) return false;
+  try {
+    const url = new URL(contents.getURL());
+    return LOOPBACK_HOSTS.has(url.hostname) && Number(url.port) !== launcherPort;
   } catch {
     return false;
   }
@@ -212,6 +224,7 @@ async function attachUsageOverlay(contents) {
   if (!LOOPBACK_HOSTS.has(url.hostname) || Number(url.port) === launcherPort) return;
 
   await contents.executeJavaScript(usageWidgetScript(), true).catch(() => undefined);
+  appearanceBridge?.apply(contents).catch(() => undefined);
   const instance = findInstanceForContents(contents);
   if (!instance) return;
 
@@ -347,11 +360,18 @@ function waitForHealth(port, timeoutMs = 15000) {
 async function startEmbeddedLauncher() {
   const port = await findFreePort();
   process.env.DSH_REMOTE_PORT = String(port);
+  process.env.DSH_REMOTE_SETTINGS_DIR = app.getPath('userData');
   if (!process.argv.includes('--no-open')) process.argv.push('--no-open');
 
   const entry = pathToFileURL(path.resolve(__dirname, '../src/server.mjs')).href;
   remoteModule = await import(entry);
   bindInstanceLifecycle();
+  appearanceBridge = createAppearanceBridge({
+    BrowserWindow,
+    store: remoteModule.appearanceStore,
+    isHarnessContents,
+  });
+  appearanceBridge.bind();
   await waitForHealth(port);
   launcherPort = port;
   launcherUrl = `http://127.0.0.1:${port}`;
@@ -382,6 +402,8 @@ function createMainWindow(url) {
 async function stopEmbeddedLauncher() {
   instanceLifecycleUnsubscribe?.();
   instanceLifecycleUnsubscribe = undefined;
+  appearanceBridge?.dispose();
+  appearanceBridge = undefined;
   for (const subscription of usageSubscriptions.values()) subscription.unsubscribe?.();
   usageSubscriptions.clear();
   for (const subscription of balanceSubscriptions.values()) subscription.unsubscribe?.();
@@ -408,7 +430,7 @@ app.whenReady().then(async () => {
     createMainWindow(url);
   } catch (error) {
     const message = error instanceof Error ? error.stack || error.message : String(error);
-    dialog.showErrorBox('DeepSeek Harness Remote 启动失败', message);
+    dialog.showErrorBox('DeepSeek Harness Desktop 启动失败', message);
     app.quit();
   }
 });
