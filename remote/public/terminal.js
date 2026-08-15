@@ -442,7 +442,8 @@ function init() {
   });
   document.addEventListener('keydown', (event) => {
     const modifier = event.ctrlKey || event.metaKey;
-    if (modifier && event.key.toLowerCase() === 'f' && !$('#bottom-panel')?.classList.contains('collapsed') && $('#terminal-panel-view') && !$('#terminal-panel-view').classList.contains('hidden')) {
+    const terminalFocused = Boolean(document.activeElement?.closest?.('.xterm'));
+    if (modifier && event.key.toLowerCase() === 'f' && terminalFocused) {
       event.preventDefault();
       event.stopPropagation();
       showSearch();
