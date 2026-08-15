@@ -16,6 +16,16 @@ const filePreview = $('#file-preview');
 const previewName = $('#preview-name');
 const previewPath = $('#preview-path');
 const copyFilePathButton = $('#copy-file-path');
+const filesTab = $('#files-tab');
+const localRuntimeNote = $('#local-runtime-note');
+const wallpaperEnabled = $('#wallpaper-enabled');
+const wallpaperUrl = $('#wallpaper-url');
+const wallpaperOpacity = $('#wallpaper-opacity');
+const wallpaperBlur = $('#wallpaper-blur');
+const wallpaperOpacityValue = $('#wallpaper-opacity-value');
+const wallpaperBlurValue = $('#wallpaper-blur-value');
+const wallpaperPreview = $('#wallpaper-preview');
+let runMode = 'local';
 let selectedLog = '';
 let lastLogText = '';
 let currentFilesDirectory = '/';
@@ -72,6 +82,7 @@ function fileTypeLabel(type) {
 }
 
 function setView(name) {
+  if (name === 'files' && runMode !== 'ssh') return;
   document.querySelectorAll('.view-tab').forEach((button) => button.classList.toggle('active', button.dataset.view === name));
   $('#launch-view').classList.toggle('hidden', name !== 'launch');
   $('#files-view').classList.toggle('hidden', name !== 'files');
@@ -89,23 +100,41 @@ async function loadHosts() {
   filesHostLabel.textContent = host.value || '未选择服务器';
 }
 
-function renderCheck(data) {
+function renderCheck(data, local = false) {
   const rows = [
-    ['Host', data.hostname || host.value],
+    ['Host', local ? 'Local' : (data.hostname || host.value)],
     ['OS / arch', `${data.os || '?'} / ${data.arch || '?'}`],
     ['Node', data.node || 'not found'],
     ['Python', data.python || 'not found'],
     ['Conda', data.conda || 'not found'],
-    ['Harness runtime', data.ready ? 'ready' : 'Node >= 22.19 required'],
+    ['Harness runtime', data.ready ? 'ready' : `Node >= ${data.minNode || '22.19'} required`],
   ];
-  checkBox.innerHTML = `
+  const markup = `
     <div class="runtime-grid">
       ${rows.map(([label, value]) => `<div class="runtime-row"><span class="runtime-label">${esc(label)}</span><span class="runtime-value ${label === 'Harness runtime' ? (data.ready ? 'good' : 'bad') : ''}" title="${esc(value)}">${esc(value)}</span></div>`).join('')}
     </div>
-    ${data.ready ? '' : '<div class="runtime-action"><button id="install-runtime" class="button secondary">安装私有 Node 22（无需 sudo）</button></div>'}
+    ${local || data.ready ? '' : '<div class="runtime-action"><button id="install-runtime" class="button secondary">安装私有 Node 22（无需 sudo）</button></div>'}
   `;
-  checkBox.classList.remove('hidden');
-  $('#install-runtime')?.addEventListener('click', installRuntime);
+  if (local) {
+    localRuntimeNote.innerHTML = markup;
+    localRuntimeNote.classList.toggle('bad', !data.ready);
+  } else {
+    checkBox.innerHTML = markup;
+    checkBox.classList.remove('hidden');
+    $('#install-runtime')?.addEventListener('click', installRuntime);
+  }
+}
+
+async function checkLocal() {
+  try {
+    const data = await api('/api/local/check');
+    renderCheck(data, true);
+    return data;
+  } catch (error) {
+    localRuntimeNote.textContent = error.message;
+    localRuntimeNote.classList.add('bad');
+    return undefined;
+  }
 }
 
 async function check() {
@@ -135,13 +164,47 @@ async function installRuntime() {
   }
 }
 
-async function browse(path = workspace.value || '/') {
+async function setMode(mode) {
+  runMode = mode === 'ssh' ? 'ssh' : 'local';
+  document.querySelectorAll('[data-target]').forEach((button) => button.classList.toggle('active', button.dataset.target === runMode));
+  document.querySelectorAll('.remote-only').forEach((element) => element.classList.toggle('hidden-by-mode', runMode !== 'ssh'));
+  filesTab.classList.toggle('files-tab-disabled', runMode !== 'ssh');
+  $('#workspace-label').textContent = runMode === 'ssh' ? '远程工作区' : '本机工作区';
+  $('#workspace-note').textContent = runMode === 'ssh' ? 'Harness 将在服务器上以这里作为项目根目录' : 'Harness 将在本机以这里作为项目根目录';
+  $('#mode-note').textContent = runMode === 'ssh'
+    ? 'SSH 模式通过系统 SSH 配置连接服务器，并把 Harness Web UI 隧道到本机。'
+    : '本机模式直接使用本机 Node/npm 启动官方 DeepSeek Harness，不经过 SSH。';
+  $('#launch').querySelector('span').textContent = runMode === 'ssh' ? '连接并打开 Harness' : '打开本机 Harness';
+  launchStatus.textContent = runMode === 'ssh' ? '准备好后启动远程 Harness。' : '准备好后启动本机 Harness。';
+  browser.classList.add('hidden');
+  if (runMode === 'local') {
+    setView('launch');
+    const runtime = await checkLocal();
+    if (!workspace.value || workspace.dataset.mode === 'ssh') {
+      try {
+        const data = await api('/api/local/directories');
+        workspace.value = data.current;
+        workspace.dataset.mode = 'local';
+      } catch { /* leave editable */ }
+    }
+    if (runtime && !runtime.ready) launchStatus.textContent = `本机需要 Node.js >= ${runtime.minNode} 且 npm/npx 可用。`;
+  } else {
+    if (workspace.dataset.mode === 'local') workspace.value = '';
+    workspace.dataset.mode = 'ssh';
+  }
+}
+
+async function browse(pathValue = workspace.value) {
   const button = $('#browse');
   busy(button, true, '加载…');
   try {
-    const data = await api(`/api/directories?host=${encodeURIComponent(host.value)}&path=${encodeURIComponent(path)}`);
+    const endpoint = runMode === 'local'
+      ? `/api/local/directories?path=${encodeURIComponent(pathValue || '')}`
+      : `/api/directories?host=${encodeURIComponent(host.value)}&path=${encodeURIComponent(pathValue || '/')}`;
+    const data = await api(endpoint);
     workspace.value = data.current;
-    const parent = data.current === '/' ? '/' : data.current.replace(/\/+[^/]+\/?$/, '') || '/';
+    workspace.dataset.mode = runMode;
+    const parent = data.parent || (data.current === '/' ? '/' : data.current.replace(/\/+[^/]+\/?$/, '') || '/');
     browser.innerHTML = `
       <div class="browser-path" title="${esc(data.current)}">${esc(data.current)}</div>
       <button class="browser-item parent" data-path="${esc(parent)}"><span aria-hidden="true">↰</span><span>上一级</span></button>
@@ -159,13 +222,20 @@ async function browse(path = workspace.value || '/') {
 
 async function launch() {
   const button = $('#launch');
-  busy(button, true, '正在连接…');
-  launchStatus.textContent = '正在解析远程环境、部署会话环境插件并启动 Harness…';
+  busy(button, true, runMode === 'ssh' ? '正在连接…' : '正在启动…');
+  launchStatus.textContent = runMode === 'ssh'
+    ? '正在解析远程环境、部署插件并启动 Harness…'
+    : '正在检查本机 Node/npm、部署遥测插件并启动 Harness…';
   launchStatus.className = 'launch-status';
   try {
     const data = await api('/api/launch', {
       method: 'POST',
-      body: JSON.stringify({ host: host.value, workspace: workspace.value, installRuntime: true }),
+      body: JSON.stringify({
+        mode: runMode,
+        host: runMode === 'ssh' ? host.value : undefined,
+        workspace: workspace.value,
+        installRuntime: true,
+      }),
     });
     launchStatus.textContent = `Harness 已启动 · ${data.url}`;
     launchStatus.className = 'launch-status good';
@@ -175,6 +245,46 @@ async function launch() {
     launchStatus.textContent = error.message;
     launchStatus.className = 'launch-status bad';
     await refresh();
+  } finally {
+    busy(button, false);
+  }
+}
+
+function renderAppearance(settings) {
+  wallpaperEnabled.checked = settings.enabled !== false;
+  wallpaperUrl.value = settings.imageUrl || '';
+  wallpaperOpacity.value = String(settings.opacity ?? 82);
+  wallpaperBlur.value = String(settings.blur ?? 16);
+  wallpaperOpacityValue.textContent = `${wallpaperOpacity.value}%`;
+  wallpaperBlurValue.textContent = `${wallpaperBlur.value}px`;
+  wallpaperPreview.style.backgroundImage = wallpaperEnabled.checked && wallpaperUrl.value ? `url("${wallpaperUrl.value.replaceAll('"', '%22')}")` : 'none';
+  wallpaperPreview.style.opacity = String(Math.max(0.5, Number(wallpaperOpacity.value) / 100));
+  wallpaperPreview.style.filter = Number(wallpaperBlur.value) > 0 ? `blur(${Math.min(4, Number(wallpaperBlur.value) / 5)}px)` : 'none';
+}
+
+async function loadAppearance() {
+  try { renderAppearance(await api('/api/appearance')); } catch { /* keep defaults */ }
+}
+
+async function saveAppearance(reset = false) {
+  const button = reset ? $('#reset-wallpaper') : $('#save-wallpaper');
+  busy(button, true, '应用中…');
+  try {
+    const settings = await api('/api/appearance', {
+      method: 'POST',
+      body: JSON.stringify(reset ? { reset: true } : {
+        enabled: wallpaperEnabled.checked,
+        imageUrl: wallpaperUrl.value,
+        opacity: Number(wallpaperOpacity.value),
+        blur: Number(wallpaperBlur.value),
+      }),
+    });
+    renderAppearance(settings);
+    launchStatus.textContent = 'Harness 背景已更新，已打开的 Local / SSH 窗口也会同步。';
+    launchStatus.className = 'launch-status good';
+  } catch (error) {
+    launchStatus.textContent = error.message;
+    launchStatus.className = 'launch-status bad';
   } finally {
     busy(button, false);
   }
@@ -204,7 +314,7 @@ function renderRemoteEntries(data) {
   });
 }
 
-async function loadRemoteFiles(path = filesPath.value || '/') {
+async function loadRemoteFiles(pathValue = filesPath.value || '/') {
   const selectedHost = host.value.trim();
   if (!selectedHost) {
     filesMessage.textContent = '请先在 Harness 页选择 SSH 服务器。';
@@ -212,10 +322,10 @@ async function loadRemoteFiles(path = filesPath.value || '/') {
     return;
   }
   filesHostLabel.textContent = selectedHost;
-  filesMessage.textContent = `正在读取 ${path} …`;
+  filesMessage.textContent = `正在读取 ${pathValue} …`;
   filesMessage.className = 'files-message';
   try {
-    const data = await api(`/api/files?host=${encodeURIComponent(selectedHost)}&path=${encodeURIComponent(path || '/')}`);
+    const data = await api(`/api/files?host=${encodeURIComponent(selectedHost)}&path=${encodeURIComponent(pathValue || '/')}`);
     currentFilesDirectory = data.current;
     currentFilesParent = data.parent;
     filesPath.value = data.current;
@@ -235,13 +345,11 @@ function renderPreview(data) {
   previewName.textContent = data.name;
   previewPath.textContent = data.path;
   copyFilePathButton.disabled = false;
-
   if (data.kind === 'image') {
     filePreview.className = 'file-preview image-preview';
     filePreview.innerHTML = `<img src="data:${esc(data.mime)};base64,${data.base64}" alt="${esc(data.name)}"><div class="preview-meta">${esc(formatBytes(data.size))}</div>`;
     return;
   }
-
   if (data.kind === 'text') {
     const notice = data.truncated ? `<div class="preview-notice">文件较大，仅显示前 ${esc(formatBytes(data.previewLimit))}。</div>` : '';
     filePreview.className = 'file-preview text-preview';
@@ -249,32 +357,33 @@ function renderPreview(data) {
     filePreview.querySelector('.preview-code').textContent = data.content || '';
     return;
   }
-
   filePreview.className = 'file-preview empty-preview';
   filePreview.innerHTML = `<div class="preview-empty-icon">◫</div><strong>二进制文件</strong><span>${esc(formatBytes(data.size))} · 当前仅显示文件信息，不直接解析内容。</span>`;
 }
 
-async function previewRemoteFile(path) {
+async function previewRemoteFile(pathValue) {
   const selectedHost = host.value.trim();
   previewName.textContent = '加载中…';
-  previewPath.textContent = path;
+  previewPath.textContent = pathValue;
   filePreview.className = 'file-preview empty-preview';
   filePreview.innerHTML = '<div class="preview-spinner"></div><span>正在通过 SSH 读取文件…</span>';
   copyFilePathButton.disabled = true;
   try {
-    renderPreview(await api(`/api/file?host=${encodeURIComponent(selectedHost)}&path=${encodeURIComponent(path)}`));
+    renderPreview(await api(`/api/file?host=${encodeURIComponent(selectedHost)}&path=${encodeURIComponent(pathValue)}`));
   } catch (error) {
-    selectedFilePath = path;
-    previewName.textContent = path.split('/').at(-1) || path;
-    previewPath.textContent = path;
+    selectedFilePath = pathValue;
+    previewName.textContent = pathValue.split('/').at(-1) || pathValue;
+    previewPath.textContent = pathValue;
     copyFilePathButton.disabled = false;
     filePreview.className = 'file-preview empty-preview';
     filePreview.innerHTML = `<div class="preview-empty-icon error">!</div><strong>无法预览</strong><span>${esc(error.message)}</span>`;
   }
 }
 
-function useFilesDirectoryAsWorkspace() {
+async function useFilesDirectoryAsWorkspace() {
+  await setMode('ssh');
   workspace.value = currentFilesDirectory || filesPath.value || '/';
+  workspace.dataset.mode = 'ssh';
   launchStatus.textContent = `已选择工作区 · ${workspace.value}`;
   launchStatus.className = 'launch-status good';
   setView('launch');
@@ -291,17 +400,18 @@ async function copyFilePath() {
 
 function card(instance) {
   const terminalUrl = instance.url ? `<a class="instance-action open" href="${esc(instance.url)}" target="_blank" rel="noopener">打开 Harness</a>` : '';
-  const stop = !['stopped', 'error'].includes(instance.status) ? `<button class="instance-action" data-stop="${esc(instance.id)}">停止</button>` : '';
+  const stopButton = !['stopped', 'error'].includes(instance.status) ? `<button class="instance-action" data-stop="${esc(instance.id)}">停止</button>` : '';
+  const mode = instance.mode === 'local' ? 'LOCAL' : 'SSH';
   return `
     <div class="instance">
       <div class="instance-top">
-        <div class="instance-host"><span class="status-dot ${esc(instance.status)}"></span><strong>${esc(instance.host)}</strong></div>
+        <div class="instance-host"><span class="status-dot ${esc(instance.status)}"></span><strong>${esc(instance.host)}</strong><span class="instance-mode">${mode}</span></div>
         <span class="pill ${esc(instance.status)}">${esc(statusLabel(instance.status))}</span>
       </div>
       <div class="instance-path">${esc(instance.workspace)}</div>
       <div class="instance-meta">Node ${esc(instance.nodeVersion || '?')} · ${esc(instance.nodeSource || '?')}</div>
       ${instance.error ? `<div class="instance-error">${esc(instance.error)}</div>` : ''}
-      <div class="instance-actions">${terminalUrl}<button class="instance-action" data-log="${esc(instance.id)}">查看日志</button>${stop}</div>
+      <div class="instance-actions">${terminalUrl}<button class="instance-action" data-log="${esc(instance.id)}">查看日志</button>${stopButton}</div>
     </div>
   `;
 }
@@ -348,6 +458,7 @@ async function copyLogs() {
 }
 
 document.querySelectorAll('.view-tab').forEach((button) => { button.onclick = () => setView(button.dataset.view); });
+document.querySelectorAll('[data-target]').forEach((button) => { button.onclick = () => setMode(button.dataset.target); });
 $('#check').onclick = check;
 $('#browse').onclick = () => browse();
 $('#launch').onclick = launch;
@@ -356,6 +467,8 @@ $('#files-go').onclick = () => loadRemoteFiles(filesPath.value || '/');
 $('#files-up').onclick = () => loadRemoteFiles(currentFilesParent || '/');
 $('#files-refresh').onclick = () => loadRemoteFiles(currentFilesDirectory || filesPath.value || '/');
 $('#files-use-workspace').onclick = useFilesDirectoryAsWorkspace;
+$('#save-wallpaper').onclick = () => saveAppearance(false);
+$('#reset-wallpaper').onclick = () => saveAppearance(true);
 filesPath.addEventListener('keydown', (event) => { if (event.key === 'Enter') loadRemoteFiles(filesPath.value || '/'); });
 copyFilePathButton.onclick = copyFilePath;
 copyLogsButton.onclick = copyLogs;
@@ -364,6 +477,16 @@ host.addEventListener('change', () => {
   filesHostLabel.textContent = host.value.trim() || '未选择服务器';
   selectedFilePath = '';
 });
+for (const control of [wallpaperEnabled, wallpaperUrl, wallpaperOpacity, wallpaperBlur]) {
+  control.addEventListener('input', () => renderAppearance({
+    enabled: wallpaperEnabled.checked,
+    imageUrl: wallpaperUrl.value,
+    opacity: Number(wallpaperOpacity.value),
+    blur: Number(wallpaperBlur.value),
+  }));
+}
 loadHosts().catch((error) => { $('#ssh-config').textContent = error.message; });
+loadAppearance();
+setMode('local');
 refresh();
 setInterval(refresh, 4000);
