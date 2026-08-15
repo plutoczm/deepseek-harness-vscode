@@ -12,6 +12,9 @@ import {
   remoteFileMetadata,
 } from './files.mjs';
 import { HarnessManager } from './manager.mjs';
+import { LocalHarnessManager, checkLocalRuntime, listLocalDirectories } from './local-manager.mjs';
+import { UnifiedHarnessManager } from './unified-manager.mjs';
+import { appearanceStore } from './appearance.mjs';
 import { checkRemote, installPrivateNode22, listRemoteDirectories } from './ssh.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -22,7 +25,9 @@ const pdfjsCandidates = [
 ].filter(Boolean);
 const pdfjsDirectory = pdfjsCandidates.find((candidate) => existsSync(candidate)) || pdfjsCandidates.at(-1);
 const pluginDirectory = path.resolve(here, '../harness-plugin');
-const manager = new HarnessManager(pluginDirectory);
+const remoteManager = new HarnessManager(pluginDirectory);
+const localManager = new LocalHarnessManager(pluginDirectory);
+const manager = new UnifiedHarnessManager(remoteManager, localManager);
 const bindHost = '127.0.0.1';
 const port = Number(process.env.DSH_REMOTE_PORT || 4173);
 
@@ -189,12 +194,33 @@ const server = http.createServer(async (request, response) => {
   const url = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`);
   try {
     if (url.pathname === '/api/health' && request.method === 'GET') {
-      json(response, 200, { ok: true, minRemoteNode: MIN_REMOTE_NODE.join('.') });
+      json(response, 200, { ok: true, minRemoteNode: MIN_REMOTE_NODE.join('.'), modes: ['local', 'ssh'] });
       return;
     }
 
     if (url.pathname === '/api/hosts' && request.method === 'GET') {
       json(response, 200, await loadSshHosts());
+      return;
+    }
+
+    if (url.pathname === '/api/local/check' && request.method === 'GET') {
+      json(response, 200, await checkLocalRuntime());
+      return;
+    }
+
+    if (url.pathname === '/api/local/directories' && request.method === 'GET') {
+      json(response, 200, await listLocalDirectories(url.searchParams.get('path')));
+      return;
+    }
+
+    if (url.pathname === '/api/appearance' && request.method === 'GET') {
+      json(response, 200, await appearanceStore.get());
+      return;
+    }
+
+    if (url.pathname === '/api/appearance' && request.method === 'POST') {
+      const body = await readJson(request);
+      json(response, 200, body.reset === true ? await appearanceStore.reset() : await appearanceStore.set(body));
       return;
     }
 
@@ -235,6 +261,7 @@ const server = http.createServer(async (request, response) => {
       const body = await readJson(request);
       try {
         json(response, 200, await manager.launch({
+          mode: body.mode === 'local' ? 'local' : 'ssh',
           host: body.host,
           workspace: body.workspace,
           installRuntime: body.installRuntime !== false,
@@ -306,8 +333,8 @@ server.listen(port, bindHost, () => {
   const address = server.address();
   const actualPort = typeof address === 'object' && address ? address.port : port;
   const url = `http://${bindHost}:${actualPort}`;
-  console.log(`DeepSeek Harness Remote: ${url}`);
-  console.log('SSH authentication uses your system ssh client and ~/.ssh/config.');
+  console.log(`DeepSeek Harness Desktop: ${url}`);
+  console.log('Local mode uses your local Node/npm; SSH mode uses your system ssh client and ~/.ssh/config.');
   openBrowser(url);
 });
 
@@ -322,4 +349,4 @@ async function shutdown() {
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
-export { manager, server };
+export { appearanceStore, localManager, manager, remoteManager, server };

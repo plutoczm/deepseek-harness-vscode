@@ -4,13 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>DeepSeek Harness Remote</title>
+  <title>DeepSeek Harness Desktop</title>
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/files.css">
   <link rel="stylesheet" href="/pdf-viewer.css">
   <link rel="stylesheet" href="/workspace-picker.css">
   <link rel="stylesheet" href="/ui-polish.css">
   <link rel="stylesheet" href="/network-options.css">
+  <link rel="stylesheet" href="/mode.css">
 </head>
 <body>
   <main class="shell">
@@ -18,17 +19,17 @@
       <div class="brand">
         <div class="brand-mark brand-mark-whale" aria-hidden="true"><img src="/whale-mark.svg" alt=""></div>
         <div>
-          <div class="eyebrow">DEEPSEEK HARNESS · REMOTE</div>
-          <h1>DeepSeek Harness Remote</h1>
-          <p>连接 SSH 服务器、浏览远程文件，并在服务器上运行官方 Harness。</p>
+          <div class="eyebrow">DEEPSEEK HARNESS · DESKTOP</div>
+          <h1>DeepSeek Harness Desktop</h1>
+          <p>本机或 SSH 服务器都可以运行官方 Harness，并共用会话费用、API 余额和桌面背景。</p>
         </div>
       </div>
-      <div class="local-chip"><span class="live-dot"></span>Local · 127.0.0.1</div>
+      <div class="local-chip"><span class="live-dot"></span>Local + SSH</div>
     </header>
 
     <nav class="view-tabs" aria-label="主导航">
       <button class="view-tab active" data-view="launch">Harness</button>
-      <button class="view-tab" data-view="files">远程文件</button>
+      <button id="files-tab" class="view-tab" data-view="files">远程文件</button>
     </nav>
 
     <section id="launch-view" class="view-panel">
@@ -36,13 +37,19 @@
         <article class="surface launch-panel">
           <div class="section-title">
             <div>
-              <span class="section-kicker">NEW REMOTE SESSION</span>
+              <span class="section-kicker">NEW SESSION</span>
               <h2>启动 Harness</h2>
             </div>
             <span class="section-index">01</span>
           </div>
 
-          <div class="field-group">
+          <div class="target-switch" role="group" aria-label="运行位置">
+            <button class="target-option active" type="button" data-target="local">本机 Local</button>
+            <button class="target-option" type="button" data-target="ssh">SSH 远程服务器</button>
+          </div>
+          <p id="mode-note" class="mode-note">本机模式直接使用本机 Node/npm 启动官方 DeepSeek Harness。</p>
+
+          <div id="ssh-fields" class="field-group remote-only hidden-by-mode">
             <div class="field-head">
               <label for="host">SSH 服务器</label>
               <span id="ssh-config" class="field-note"></span>
@@ -62,20 +69,21 @@
 
           <div class="field-group">
             <div class="field-head">
-              <label for="workspace">远程工作区</label>
-              <span class="field-note">Harness 将以这里作为项目根目录</span>
+              <label id="workspace-label" for="workspace">本机工作区</label>
+              <span id="workspace-note" class="field-note">Harness 将以这里作为项目根目录</span>
             </div>
             <div class="control-row">
               <div class="input-shell">
                 <span class="input-icon folder-glyph" aria-hidden="true"></span>
-                <input id="workspace" autocomplete="off" placeholder="/mnt/ext-disk/.../project">
+                <input id="workspace" autocomplete="off" placeholder="例如 D:\Projects\my-project">
               </div>
               <button id="browse" class="button secondary">浏览</button>
             </div>
             <div id="browser" class="file-browser hidden"></div>
+            <div id="local-runtime-note" class="local-runtime-note">正在检查本机 Node/npm 环境…</div>
           </div>
 
-          <details class="network-options">
+          <details class="network-options remote-only hidden-by-mode">
             <summary>
               <span>高级网络</span>
               <span id="network-summary" class="network-summary">远程服务器直连 · 推荐</span>
@@ -92,19 +100,38 @@
             </div>
           </details>
 
-          <div class="env-callout">
+          <div class="env-callout remote-only hidden-by-mode">
             <div class="env-icon" aria-hidden="true">⌘</div>
             <div class="env-copy">
-              <strong>每个 Harness 会话独立选择 Python 环境</strong>
+              <strong>每个远程 Harness 会话独立选择 Python 环境</strong>
               <span>首次执行 Bash 时会弹出 Conda / venv 单选；随时使用 <code>/env</code> 切换。</span>
             </div>
-            <span class="env-badge">PER SESSION</span>
+            <span class="env-badge">SSH ONLY</span>
           </div>
 
+          <details class="appearance-options" open>
+            <summary><span>Harness 背景</span><span>橘子洲头 · 全局</span></summary>
+            <div class="appearance-options-body">
+              <label class="appearance-toggle"><input id="wallpaper-enabled" type="checkbox" checked> 启用桌面 Harness 背景</label>
+              <div id="wallpaper-preview" class="appearance-preview"></div>
+              <div class="appearance-field">
+                <label for="wallpaper-url">背景图片 URL</label>
+                <input id="wallpaper-url" type="url" spellcheck="false" autocomplete="off">
+              </div>
+              <div class="appearance-range"><span>面板不透明度</span><input id="wallpaper-opacity" type="range" min="50" max="100" step="1"><output id="wallpaper-opacity-value">82%</output></div>
+              <div class="appearance-range"><span>背景模糊</span><input id="wallpaper-blur" type="range" min="0" max="32" step="1"><output id="wallpaper-blur-value">16px</output></div>
+              <div class="appearance-actions">
+                <button id="save-wallpaper" class="button secondary" type="button">应用背景</button>
+                <button id="reset-wallpaper" class="button secondary" type="button">恢复橘子洲默认图</button>
+              </div>
+              <p class="appearance-credit">默认图：橘子洲毛泽东青年艺术雕塑，Wikimedia Commons，Huangdan2060，CC BY 3.0。设置对 Local 与 SSH 打开的 Harness 窗口同时生效。</p>
+            </div>
+          </details>
+
           <div class="launch-footer">
-            <p id="launch-status" class="launch-status">准备好后启动远程 Harness。</p>
+            <p id="launch-status" class="launch-status">准备好后启动本机 Harness。</p>
             <button id="launch" class="button primary">
-              <span>连接并打开 Harness</span><span aria-hidden="true">↗</span>
+              <span>打开 Harness</span><span aria-hidden="true">↗</span>
             </button>
           </div>
         </article>
@@ -112,7 +139,7 @@
         <aside class="surface instances-panel">
           <div class="section-title compact">
             <div>
-              <span class="section-kicker">ACTIVE CONNECTIONS</span>
+              <span class="section-kicker">ACTIVE INSTANCES</span>
               <h2>实例</h2>
             </div>
             <button id="refresh" class="icon-button" title="刷新实例" aria-label="刷新实例">↻</button>
@@ -128,7 +155,7 @@
       <section class="surface log-panel">
         <div class="log-header">
           <div>
-            <span class="section-kicker">REMOTE OUTPUT</span>
+            <span class="section-kicker">HARNESS OUTPUT</span>
             <h2>日志</h2>
           </div>
           <div class="log-tools">
@@ -162,7 +189,7 @@
           <button id="files-use-workspace" class="button secondary accent">设为 Harness 工作区</button>
         </div>
 
-        <div id="files-message" class="files-message">选择 SSH 服务器后即可浏览。</div>
+        <div id="files-message" class="files-message">切换到 SSH 模式并选择服务器后即可浏览。</div>
 
         <div class="remote-files-layout">
           <div class="remote-list-shell">
@@ -170,7 +197,7 @@
               <span>名称</span><span>大小</span><span>修改时间</span>
             </div>
             <div id="remote-file-list" class="remote-file-list empty-file-list">
-              <div class="file-empty"><span>⌁</span><strong>等待连接</strong><small>切换到 Harness 页选择服务器，或直接使用当前服务器。</small></div>
+              <div class="file-empty"><span>⌁</span><strong>等待连接</strong><small>切换到 Harness 页选择 SSH 服务器。</small></div>
             </div>
           </div>
 
@@ -194,8 +221,8 @@
     </section>
 
     <footer class="footer-note">
-      <span>Official DeepSeek Harness runs on the selected SSH host.</span>
-      <span>远程文件页遵循 SSH 用户权限，不绕过服务器访问控制。</span>
+      <span>Official DeepSeek Harness can run locally or on the selected SSH host.</span>
+      <span>余额查询是普通 HTTP 请求，不产生模型 Token。</span>
     </footer>
   </main>
   <script src="/network-options.js"></script>
