@@ -1,0 +1,28 @@
+name: One-shot branch cleanup
+
+on:
+  push:
+    paths:
+      - '.github/workflows/cleanup-one-shot.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete every branch except main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init cleanup
+          cd cleanup
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git ls-remote --heads origin | awk '{print $2}' | sed 's#refs/heads/##' | while read -r branch; do
+            if [ "$branch" != "main" ]; then
+              git push origin --delete "$branch"
+            fi
+          done
