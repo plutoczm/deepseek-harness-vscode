@@ -1,0 +1,142 @@
+name: Optimize Desktop Once v2
+
+on:
+  push:
+    paths:
+      - '.github/workflows/optimize-desktop-once-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  optimize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.7.0 --activate
+          pnpm --version
+
+      - name: Apply performance and release hardening
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+          import json, re
+
+          def one(path, old, new):
+              p = Path(path); text = p.read_text(encoding='utf-8')
+              if text.count(old) != 1:
+                  raise SystemExit(f'{path}: exact replacement mismatch for {old[:70]!r}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          main = 'apps/desktop/src/main.ts'
+          one(main,
+              """    ...(process.platform === 'win32' ? {\n      backgroundMaterial: 'acrylic' as const,\n      hasShadow: true,\n      roundedCorners: true,\n      thickFrame: true,\n    } : {""",
+              """    ...(process.platform === 'win32' ? {\n      backgroundMaterial: 'none' as const,\n      backgroundColor: '#07111d',\n      hasShadow: true,\n      roundedCorners: true,\n      thickFrame: true,\n    } : {""")
+          one(main,
+              """      sandbox: true,\n      webSecurity: true,""",
+              """      sandbox: true,\n      webSecurity: true,\n      backgroundThrottling: true,""")
+
+          skin = 'packages/client/ui-desktop-customization/src/client/DesktopCustomization.module.css'
+          one(skin, '  background-attachment: fixed, fixed !important;',
+                    '  background-attachment: scroll, scroll !important;')
+          p = Path(skin); text = p.read_text(encoding='utf-8')
+          marker = ":global(body[data-dsh-desktop-skin='active'] #root) {\n  background: transparent !important;\n}\n"
+          extra = marker + """\n/* Skip full painting for off-screen plugin-market content. */\n:global(body[data-dsh-desktop-skin='active'] [data-catalog-entry]),\n:global(body[data-dsh-desktop-skin='active'] [data-discovery-entry]),\n:global(body[data-dsh-desktop-skin='active'] [data-catalog-section]) {\n  content-visibility: auto;\n  contain-intrinsic-size: auto 180px;\n}\n"""
+          if text.count(marker) != 1: raise SystemExit('skin root marker mismatch')
+          p.write_text(text.replace(marker, extra, 1), encoding='utf-8')
+
+          for css in [
+              'packages/client/ui-plugin-center/src/client/PluginCenterTab.module.css',
+              'packages/client/ui-plugin-center/src/client/PluginDiscoveryPage.module.css',
+          ]:
+              p = Path(css); text = p.read_text(encoding='utf-8')
+              text, count = re.subn(r'backdrop-filter:\s*blur\([^;]+\);', 'backdrop-filter: none;', text)
+              print(f'{css}: disabled {count} live blur rule(s)')
+              p.write_text(text, encoding='utf-8')
+
+          pc = 'packages/client/ui-plugin-center/src/client/PluginCenterTab.tsx'
+          one(pc,
+              "  const [query, setQuery] = useState('')\n  const [revision, setRevision] = useState(0)",
+              "  const [query, setQuery] = useState('')\n  const [debouncedQuery, setDebouncedQuery] = useState('')\n  const [revision, setRevision] = useState(0)")
+          one(pc,
+              """  const criteria = useMemo<CatalogListQuery>(() => ({\n    catalogKind: kind,\n    scope,\n    query: query.trim(),\n    limit: 24,\n  }), [kind, query, scope])""",
+              """  useEffect(() => {\n    const timer = window.setTimeout(() => { setDebouncedQuery(query) }, 220)\n    return () => { window.clearTimeout(timer) }\n  }, [query])\n\n  const criteria = useMemo<CatalogListQuery>(() => ({\n    catalogKind: kind,\n    scope,\n    query: debouncedQuery.trim(),\n    limit: 24,\n  }), [debouncedQuery, kind, scope])""")
+          one(pc,
+              """        if (result.source === 'network' && result.freshness === 'fresh'\n          && uniqueEntries([result]).length >= criteria.limit) return""",
+              """        if (result.freshness !== 'stale' && uniqueEntries([result]).length > 0) return""")
+
+          pd = 'packages/client/ui-plugin-center/src/client/PluginDiscoveryPage.tsx'
+          one(pd,
+              "  const [query, setQuery] = useState('')\n  const [mode, setMode] = useState<DiscoveryMode>('overview')",
+              "  const [query, setQuery] = useState('')\n  const [debouncedQuery, setDebouncedQuery] = useState('')\n  const [mode, setMode] = useState<DiscoveryMode>('overview')")
+          one(pd,
+              """  const criteria = useMemo<CatalogListQuery>(() => ({\n    catalogKind: 'plugin',\n    scope: 'public',\n    query: query.trim(),\n    limit: 48,\n  }), [query])""",
+              """  useEffect(() => {\n    const timer = window.setTimeout(() => { setDebouncedQuery(query) }, 220)\n    return () => { window.clearTimeout(timer) }\n  }, [query])\n\n  const criteria = useMemo<CatalogListQuery>(() => ({\n    catalogKind: 'plugin',\n    scope: 'public',\n    query: debouncedQuery.trim(),\n    limit: 48,\n  }), [debouncedQuery])""")
+          one(pd,
+              "        if (result.source === 'network' && result.freshness === 'fresh') return",
+              "        if (result.freshness !== 'stale' && uniqueEntries(result).length > 0) return")
+          one(pd,
+              "          {ready !== null && query.trim() !== '' ? (",
+              "          {ready !== null && debouncedQuery.trim() !== '' ? (")
+
+          # Decode catalog artwork asynchronously.
+          for source in [pc, pd]:
+              p = Path(source); text = p.read_text(encoding='utf-8')
+              text = text.replace('loading="lazy"\n          referrerPolicy=',
+                                  'loading="lazy"\n          decoding="async"\n          referrerPolicy=')
+              if source == pd:
+                  text = text.replace('height={entry.icon.height}\n          referrerPolicy=',
+                                      'height={entry.icon.height}\n          decoding="async"\n          referrerPolicy=')
+              p.write_text(text, encoding='utf-8')
+
+          manifest_path = Path('apps/desktop/package.json')
+          manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+          manifest['version'] = '0.1.0-rc.6.1'
+          manifest['description'] = 'DeepSeek Harness desktop application with integrated plugin center and performance-tuned Windows shell'
+          manifest['build']['publish'] = [{
+              'provider': 'github', 'owner': 'plutoczm', 'repo': 'deepseek-harness-vscode'
+          }]
+          manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          PY
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Focused tests
+        run: pnpm exec vitest run apps/desktop packages/client/ui-plugin-center
+
+      - name: Production build
+        run: pnpm run build
+
+      - name: Commit optimized source
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/desktop/package.json apps/desktop/src/main.ts \
+            packages/client/ui-desktop-customization/src/client/DesktopCustomization.module.css \
+            packages/client/ui-plugin-center/src/client/PluginCenterTab.tsx \
+            packages/client/ui-plugin-center/src/client/PluginCenterTab.module.css \
+            packages/client/ui-plugin-center/src/client/PluginDiscoveryPage.tsx \
+            packages/client/ui-plugin-center/src/client/PluginDiscoveryPage.module.css
+          git diff --cached --check
+          git commit -m "perf: streamline Windows desktop rendering and plugin discovery"
+          git push origin HEAD:main
