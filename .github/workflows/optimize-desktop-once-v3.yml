@@ -59,8 +59,14 @@ jobs:
             packages/client/ui-plugin-center/src/client/PluginDiscoveryPage.tsx \
             packages/client/ui-plugin-center/src/client/PluginDiscoveryPage.module.css \
             packages/client/ui-plugin-center/tests/discovery.client.spec.tsx
-          if grep -nE 'PluginDiscovery|plugin-discovery' packages/client/ui-plugin-center/src/client/index.ts; then
-            echo 'Plugin Discovery is still registered' >&2
+          sed -i \
+            -e '/src\/client\/PluginDiscoveryNavItem\.tsx/d' \
+            -e '/src\/client\/PluginDiscoveryPage\.tsx/d' \
+            packages/client/ui-plugin-center/tsconfig.client.json
+          if grep -R -nE 'PluginDiscovery|plugin-discovery' \
+            packages/client/ui-plugin-center/src/client/index.ts \
+            packages/client/ui-plugin-center/tsconfig.client.json; then
+            echo 'Plugin Discovery is still registered in the client project' >&2
             exit 1
           fi
 
@@ -156,7 +162,9 @@ jobs:
           ! test -e packages/client/ui-plugin-center/src/client/PluginDiscoveryPage.tsx
           ! test -e packages/client/ui-plugin-center/src/client/PluginDiscoveryNavItem.tsx
           ! test -e packages/client/ui-plugin-center/tests/discovery.client.spec.tsx
-          ! grep -qE 'PluginDiscovery|plugin-discovery' packages/client/ui-plugin-center/src/client/index.ts
+          ! grep -R -qE 'PluginDiscovery|plugin-discovery' \
+            packages/client/ui-plugin-center/src/client/index.ts \
+            packages/client/ui-plugin-center/tsconfig.client.json
           ! grep -q "backgroundMaterial: 'acrylic'" apps/desktop/src/main.ts
           grep -q "backgroundColor: '#07111d'" apps/desktop/src/main.ts
           grep -q '"provider": "github"' apps/desktop/package.json
@@ -176,3 +184,4 @@ jobs:
           git status --short
           git commit -m 'feat: finalize Scorpion desktop and remote proxy workflow'
           git push origin HEAD:main
+          git push origin --delete diag-temp || true
