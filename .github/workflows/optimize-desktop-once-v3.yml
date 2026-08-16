@@ -99,6 +99,11 @@ jobs:
               if w.count(marker) != 1:
                   raise SystemExit('pnpm workspace marker mismatch')
               w = w.replace(marker, marker + '  - third_party/*\n', 1)
+          if '  ssh2: false\n' not in w or '  cpu-features: false\n' not in w:
+              marker = '  electron-winstaller: false\n'
+              if w.count(marker) != 1:
+                  raise SystemExit('allowBuilds marker mismatch')
+              w = w.replace(marker, marker + '  ssh2: false\n  cpu-features: false\n', 1)
           workspace.write_text(w, encoding='utf-8')
           PY
 
@@ -131,6 +136,8 @@ jobs:
           ! grep -qE 'PluginDiscovery|plugin-discovery' packages/client/ui-plugin-center/src/client/index.ts
           grep -q "backgroundMaterial: 'none'" apps/desktop/src/main.ts
           grep -q '"provider": "github"' apps/desktop/package.json
+          grep -q '  ssh2: false' pnpm-workspace.yaml
+          grep -q '  cpu-features: false' pnpm-workspace.yaml
 
       - name: Commit validated source and remove temporary staging files
         shell: bash
