@@ -64,7 +64,7 @@ jobs:
         run: |
           python <<'PY'
           from pathlib import Path
-          import json, re
+          import json
 
           def one(path, old, new):
               p = Path(path)
@@ -79,14 +79,6 @@ jobs:
           one('packages/client/ui-desktop-customization/src/client/DesktopCustomization.module.css',
               '  background-attachment: fixed, fixed !important;',
               '  background-attachment: scroll, scroll !important;')
-
-          css = Path('packages/client/ui-plugin-center/src/client/PluginCenterTab.module.css')
-          text = css.read_text(encoding='utf-8')
-          text, count = re.subn(r'backdrop-filter:\s*blur\([^;]+\);', 'backdrop-filter: none;', text)
-          if count == 0:
-              raise SystemExit('Plugin Center had no live backdrop blur rule to optimize')
-          css.write_text(text, encoding='utf-8')
-          print(f'disabled {count} live Plugin Center blur rule(s)')
 
           desktop_path = Path('apps/desktop/package.json')
           desktop = json.loads(desktop_path.read_text(encoding='utf-8'))
