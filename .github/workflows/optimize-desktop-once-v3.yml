@@ -54,6 +54,11 @@ jobs:
           set -euo pipefail
           cat .scorpion/plugin-center-index.b64 | tr -d '\n\r' | base64 -d | gzip -d > packages/client/ui-plugin-center/src/client/index.ts
           cat .scorpion/plugin-center-test.b64 | tr -d '\n\r' | base64 -d | gzip -d > packages/client/ui-plugin-center/tests/apply.client.spec.ts
+          rm -f \
+            packages/client/ui-plugin-center/src/client/PluginDiscoveryNavItem.tsx \
+            packages/client/ui-plugin-center/src/client/PluginDiscoveryPage.tsx \
+            packages/client/ui-plugin-center/src/client/PluginDiscoveryPage.module.css \
+            packages/client/ui-plugin-center/tests/discovery.client.spec.tsx
           if grep -nE 'PluginDiscovery|plugin-discovery' packages/client/ui-plugin-center/src/client/index.ts; then
             echo 'Plugin Discovery is still registered' >&2
             exit 1
@@ -133,6 +138,9 @@ jobs:
           grep -q 'forwardIn(remoteHost, requestedPort' third_party/dsh-remote/lib/index.js
           grep -q 'rw_proxy_tunnel' third_party/dsh-remote/lib/index.js
           grep -q 'SSH 反向代理' third_party/dsh-remote/lib/client.js
+          ! test -e packages/client/ui-plugin-center/src/client/PluginDiscoveryPage.tsx
+          ! test -e packages/client/ui-plugin-center/src/client/PluginDiscoveryNavItem.tsx
+          ! test -e packages/client/ui-plugin-center/tests/discovery.client.spec.tsx
           ! grep -qE 'PluginDiscovery|plugin-discovery' packages/client/ui-plugin-center/src/client/index.ts
           grep -q "backgroundMaterial: 'none'" apps/desktop/src/main.ts
           grep -q '"provider": "github"' apps/desktop/package.json
