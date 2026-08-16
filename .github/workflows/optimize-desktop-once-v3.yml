@@ -19,7 +19,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Node 24 without package-manager cache
+      - name: Setup Node
         uses: actions/setup-node@v5
         with:
           node-version: '24'
@@ -32,7 +32,7 @@ jobs:
           node --version
           pnpm --version
 
-      - name: Vendor marketplace dsh-remote 0.5.7 and apply Scorpion proxy patch
+      - name: Vendor and enhance marketplace dsh-remote 0.5.7
         shell: bash
         run: |
           set -euo pipefail
@@ -41,905 +41,28 @@ jobs:
           curl --fail --location --retry 3 \
             'https://github.com/flymysql/dsh-remote/archive/bd56bcd6435aec08e6ac583c21d39bb9e81f1022.tar.gz' \
             | tar -xz --strip-components=1 -C third_party/dsh-remote
-          cat > /tmp/dsh-remote-scorpion.patch.b64 <<'B64'
-          ZGlmZiAtLWdpdCBhL1NDT1JQSU9OLm1kIGIvU0NPUlBJT04ubWQKbmV3IGZpbGUgbW9kZSAxMDA2
-          NDQKaW5kZXggMDAwMDAwMC4uODFjNGUzNQotLS0gL2Rldi9udWxsCisrKyBiL1NDT1JQSU9OLm1k
-          CkBAIC0wLDAgKzEsMTMgQEAKKyMgU2NvcnBpb24gRGVza3RvcCBpbnRlZ3JhdGlvbgoKK1RoaXMg
-          cGFja2FnZSBpcyBiYXNlZCBvbiBgZmx5bXlzcWwvZHNoLXJlbW90ZWAgMC41LjcgKE1JVCkuCisK
-          K0xvY2FsIGFkZGl0aW9uczoKKy0gb3B0aW9uYWwgU1NIIGJ5dGVycm9yIFRDUCBwcm94eSB0dW5u
-          ZWwgdXNpbmcgdGhlIGV4aXN0aW5nIGBzc2gyYCBjb25uZWN0aW9uOworLSB1c2VyLXNlbGVjdGFi
-          bGUgbG9jYWwgcHJveHkgaG9zdC9wb3J0IGFuZCByZW1vdGUgbG9vcGJhY2sgaG9zdC9wb3J0Owor
-          LSBhdXRvbWF0aWMgcmVtb3RlIHBvcnQgYWxsb2NhdGlvbiB1c2luZyBTU0ggYGZvcndhcmRJbigu
-          Li4sIDApYDsKKy0gYHJ3X2V4ZWNgIHByb3h5IGVudmlyb25tZW50IGluamVjdGlvbjsKKy0gYHJ3
-          X3Byb3h5X3R1bm5lbGAgc3RhdHVzL3Rlc3Qvc3RhcnQvc3RvcCB0b29sOworLSBwcm94eSBjb250
-          cm9scyBpbiB0aGUgUmVtb3RlIFdvcmtzcGFjZSBzZXR0aW5ncyBVSS4KKworVGhlIGRlZmF1bHQg
-          cmVtb3RlIGJpbmQgYWRkcmVzcyBpcyBgMTI3LjAuMC4xYCB0byBhdm9pZCBleHBvc2luZyB0aGUg
-          bG9jYWwgcHJveHkgdG8gdGhlIHJlbW90ZSBuZXR3b3JrLgoKZGlmZiAtLWdpdCBhL2xpYi9jbGll
-          bnQuanMgYi9saWIvY2xpZW50LmpzCmluZGV4IDg2MmFhMTQuLjRlZGFmZTQgMTAwNjQ0Ci0tLSBh
-          L2xpYi9jbGllbnQuanMKKysrIGIvbGliL2NsaWVudC5qcwpAQCAtNTksMTAgKzU5LDE1IEBAIHdp
-          bmRvdy5fX01vZHVsZUxvYWRlcl9fLmxvYWQoewogICAgIGxldCBXT1JLU1BBQ0VTID0gbnVsbCAv
-          LyBjdHguZ2V0KCd3b3Jrc3BhY2VzJyksIHNldCBpbiBhcHBseSgpCiAKICAgICAvLyDilIDilIDi
-          lIAgU2V0dGluZ3Mg4oaSIOi/nueoi+W3peS9nOWMuSAobWFjaGluZSByZWdpc3RyeSkg4pSA4pSA
-          4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA
-          4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA
-          CisgICAgY29uc3QgZW1wdHlNYWNoaW5lRm9ybSA9ICgpID0+ICh7CisgICAgICBuYW1lOiAnJywgaG9z
-          dDogJycsIHBvcnQ6ICcyMicsIHVzZXJuYW1lOiAncm9vdCcsIHBhc3N3b3JkOiAnJywgcHJpdmF0
-          ZUtleVBhdGg6ICcnLCBpZDogJycsCisgICAgICBwcm94eUVuYWJsZWQ6IGZhbHNlLCBsb2NhbFBy
-          b3h5SG9zdDogJzEyNy4wLjAuMScsIGxvY2FsUHJveHlQb3J0OiAnNzg5MCcsCisgICAgICByZW1v
-          dGVQcm94eUhvc3Q6ICcxMjcuMC4wLjEnLCByZW1vdGVQcm94eVBvcnQ6ICczMDUwMycsIHJlbW90
-          ZVByb3h5QXV0bzogdHJ1ZSwgcHJveHlFbnZFbmFibGVkOiB0cnVlLAorICAgIH0pCiAgICAgZnVu
-          Y3Rpb24gUmVtb3RlV29ya3NwYWNlUGFnZSgpIHsKICAgICAgIGNvbnN0IFttYWNoaW5lcywgc2V0
-          TWFjaGluZXNdID0gUmVhY3QudXNlU3RhdGUoW10pCiAgICAgICBjb25zdCBbY3VycmVudElkLCBz
-          ZXRCurrentId] = React.useState('')
-      const [form, setForm] = React.useState(emptyMachineForm())
-      const [busy, setBusy] = React.useState(false)
-      const [msg, setMsg] = React.useState('')
-      const [err, setErr] = React.useState('')
-      const [tst, setTst] = React.useState('')
-
-      const testConn = () => {
-        if (!form.host.trim() || tst === 'testing') return
-        setTst('testing'); setErr(''); setMsg('')
-        api('POST', '/dsh-remote/test-connect', {
-          host: form.host, port: Number(form.port) || 22, username: form.username || 'root',
-          password: form.password, privateKeyPath: form.privateKeyPath,
-          proxyEnabled: !!form.proxyEnabled, localProxyHost: form.localProxyHost, localProxyPort: Number(form.localProxyPort) || 7890,
-          remoteProxyHost: form.remoteProxyHost, remoteProxyPort: Number(form.remoteProxyPort) || 30503, remoteProxyAuto: !!form.remoteProxyAuto, proxyEnvEnabled: !!form.proxyEnvEnabled,
-        })
-          .then((r) => {
-            if (r && r.ok) {
-              const proxyText = r.proxyRemotePort ? `，代理远程端口 ${r.proxyRemotePort}` : ''
-              setTst('ok'); setMsg(r.latencyMs != null ? `连接成功（${r.user}@${r.host}，${r.latencyMs}ms${proxyText}）` : '连接成功')
-            }
-            else { setTst('failing'); setErr((r && r.error) || '连接失败') }
-          })
-          .catch((e) => { setTst('failing'); setErr(String((e && e.message) || e)) })
-      }
-
-      const refresh = () => api('GET', '/dsh-remote/machines').then((r) => { setMachines(r.machines || []); setCurrentId(r.currentId || '') })
-      React.useEffect(() => { refresh() }, [])
-
-      const setF = (k) => (ev) => setForm({ ...form, [k]: ev.target.value })
-      const setB = (k) => (ev) => setForm({ ...form, [k]: !!ev.target.checked })
-      const startEdit = (m) => setForm({
-        ...emptyMachineForm(), name: m.name, host: m.host, port: String(m.port || 22), username: m.username || 'root',
-        password: '', privateKeyPath: m.privateKeyPath || '', id: m.id,
-        proxyEnabled: m.proxyEnabled === true, localProxyHost: m.localProxyHost || '127.0.0.1', localProxyPort: String(m.localProxyPort || 7890),
-        remoteProxyHost: m.remoteProxyHost || '127.0.0.1', remoteProxyPort: String(m.remoteProxyPort || 30503),
-        remoteProxyAuto: m.remoteProxyAuto !== false, proxyEnvEnabled: m.proxyEnvEnabled !== false,
-      })
-      const save = (action) => {
-        setBusy(true); setErr(''); setMsg('')
-        if (action === 'delete') {
-          api('POST', '/dsh-remote/machines', { action: 'delete', id: form.id }).then(refresh).then(() => { setForm(emptyMachineForm()); setMsg('已删除') }).catch((e) => setErr(String((e && e.message) || e))).finally(() => setBusy(false))
-          return
-        }
-        api('POST', '/dsh-remote/machines', {
-          action: form.id ? 'update' : 'add', id: form.id || undefined, name: form.name, host: form.host, port: Number(form.port) || 22,
-          username: form.username, password: form.password, privateKeyPath: form.privateKeyPath,
-          proxyEnabled: !!form.proxyEnabled, localProxyHost: form.localProxyHost, localProxyPort: Number(form.localProxyPort) || 7890,
-          remoteProxyHost: form.remoteProxyHost, remoteProxyPort: Number(form.remoteProxyPort) || 30503, remoteProxyAuto: !!form.remoteProxyAuto, proxyEnvEnabled: !!form.proxyEnvEnabled,
-        }).then(() => { refresh(); setForm(emptyMachineForm()); setMsg(form.id ? '已保存更新' : '已添加 — 可设为当前') }).catch((e) => setErr(String((e && e.message) || e))).finally(() => setBusy(false))
-      }
-      const useNow = (id) => { setBusy(true); api('POST', '/dsh-remote/current', { id }).then((r) => { setCurrentId(r.currentId); setMsg('已切换为当前远程机') }).catch((e) => setErr(String((e && e.message) || e))).finally(() => setBusy(false)) }
-      const del = (id) => { if (window.confirm('确定删除这台机器？')) { api('POST', '/dsh-remote/machines', { action: 'delete', id }).then(refresh).then(() => setMsg('已删除')).catch((e) => setErr(String((e && e.message) || e))) } }
-
-      const row = (label, ctrl, k) => React.createElement('div', { key: k, style: { display: 'flex', gap: 6, alignItems: 'center' } },
-        React.createElement('label', { style: { width: 76, fontSize: 12, opacity: 0.8 } }, label), ctrl)
-
-      return React.createElement('div', { style: { padding: 16, display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 760 } },
-        React.createElement('div', { style: { fontSize: 15, fontWeight: 600 } }, '远程工作区（dsh-remote）'),
-        React.createElement('div', { style: { fontSize: 12, opacity: 0.8 } },
-          '维护多台 SSH 机器。路径不在设置里配置 —— 新建/选择工作区时，「本机」走系统文件夹对话框；「远程」选一台机器在远程目录中选择。'),
-        React.createElement('div', { style: boxS },
-          React.createElement('div', { style: { marginBottom: 6, fontSize: 13, fontWeight: 600 } }, '已配置的机器'),
-          machines.length
-            ? machines.map((m) => React.createElement('div', { key: m.id, style: { display: 'flex', gap: 8, alignItems: 'center', padding: '6px 0', borderBottom: '1px solid ' + T.border } },
-                React.createElement('div', { style: { flex: 1, fontSize: 13 } },
-                  m.name + '  ',
-                  React.createElement('code', { style: { fontSize: 12, opacity: 0.8 } }, m.username + '@' + m.host + ':' + m.port),
-                  m.passwordSet ? ' 🔒' : '',
-                  m.proxyEnabled ? React.createElement('span', { style: { color: T.ok, fontSize: 12 } }, ` · 代理 ${m.remoteProxyAuto !== false ? '自动端口' : (m.remoteProxyPort || 30503)}`) : null,
-                  m.id === currentId ? React.createElement('span', { style: { color: T.ok, fontSize: 12 } }, ' · 当前') : null),
-                React.createElement('button', { style: buttonS, onClick: () => startEdit(m) }, '编辑'),
-                React.createElement('button', { style: buttonS, onClick: () => del(m.id) }, '删除'),
-                React.createElement('button', { style: buttonS, onClick: () => useNow(m.id), disabled: m.id === currentId }, '设为当前')))
-            : React.createElement('div', { style: { opacity: 0.6, fontSize: 12 } }, '还没有机器。在下方添加。'),
-          ),
-        React.createElement('div', { style: boxS },
-          React.createElement('div', { style: { marginBottom: 6, fontSize: 13, fontWeight: 600 } }, form.id ? '编辑机器' : '添加机器'),
-          row('名称', React.createElement('input', { value: form.name, onChange: setF('name'), placeholder: '例如 编译机', style: inputS }), 'n'),
-          row('主机', React.createElement('input', { value: form.host, onChange: setF('host'), placeholder: 'IP 或 hostname', style: inputS }), 'h'),
-          row('端口', React.createElement('input', { value: form.port, onChange: setF('port'), placeholder: '22', style: { ...inputS, width: 70 } }), 'p'),
-          row('用户', React.createElement('input', { value: form.username, onChange: setF('username'), placeholder: 'root', style: inputS }), 'u'),
-          row('密码', React.createElement('input', { type: 'password', value: form.password, onChange: setF('password'), placeholder: 'SSH 无 key 时用（不回显、仅保存）', style: inputS }), 'w'),
-          row('私钥路径', React.createElement('input', { value: form.privateKeyPath, onChange: setF('privateKeyPath'), placeholder: '留空用默认 key', style: inputS }), 'k'),
-          React.createElement('div', { style: { marginTop: 8, paddingTop: 8, borderTop: '1px solid ' + T.border, display: 'flex', flexDirection: 'column', gap: 6 } },
-            React.createElement('div', { style: { fontSize: 13, fontWeight: 600 } }, 'SSH 反向代理（可选）'),
-            row('启用代理', React.createElement('input', { type: 'checkbox', checked: !!form.proxyEnabled, onChange: setB('proxyEnabled') }), 'pe'),
-            row('本地代理', React.createElement('div', { style: { display: 'flex', gap: 6, flex: 1 } },
-              React.createElement('input', { value: form.localProxyHost, onChange: setF('localProxyHost'), placeholder: '127.0.0.1', style: inputS }),
-              React.createElement('input', { value: form.localProxyPort, onChange: setF('localProxyPort'), placeholder: '7890', style: { ...inputS, width: 90, flex: '0 0 90px' } })), 'lp'),
-            row('远程监听', React.createElement('div', { style: { display: 'flex', gap: 6, flex: 1 } },
-              React.createElement('input', { value: form.remoteProxyHost, onChange: setF('remoteProxyHost'), placeholder: '127.0.0.1', style: inputS }),
-              React.createElement('input', { value: form.remoteProxyPort, onChange: setF('remoteProxyPort'), placeholder: '30503', disabled: !!form.remoteProxyAuto, style: { ...inputS, width: 90, flex: '0 0 90px', opacity: form.remoteProxyAuto ? 0.55 : 1 } })), 'rp'),
-            row('自动端口', React.createElement('input', { type: 'checkbox', checked: !!form.remoteProxyAuto, onChange: setB('remoteProxyAuto') }), 'pa'),
-            row('命令注入', React.createElement('input', { type: 'checkbox', checked: !!form.proxyEnvEnabled, onChange: setB('proxyEnvEnabled') }), 'px'),
-            React.createElement('div', { style: { fontSize: 11, opacity: 0.7, paddingLeft: 82 } }, '启用后，rw_exec 会自动设置 HTTP_PROXY / HTTPS_PROXY / ALL_PROXY。自动端口由 SSH 服务器分配空闲端口。'),
-          ),
-          React.createElement('div', { style: { display: 'flex', gap: 8, justifyContent: 'flex-end', alignItems: 'center' } },
-            msg ? React.createElement('span', { style: { color: T.ok, fontSize: 12, marginRight: 'auto' } }, msg) : null,
-            form.id ? React.createElement('button', { style: buttonS, onClick: () => save('delete') }, '删除') : null,
-            React.createElement('button', { style: buttonS, onClick: () => { setForm(emptyMachineForm()); setErr(''); setTst('idle') } }, form.id ? '取消编辑' : '清空'),
-            React.createElement('button', { style: { ...buttonS, fontFamily: 'monospace', whiteSpace: 'nowrap' }, onClick: testConn, disabled: busy || !form.host.trim() || tst === 'testing' },
-              tst === 'testing' ? '连接中…' : tst === 'ok' ? '✓ 连接成功' : '测试连接'),
-            React.createElement('button', { style: { ...buttonS, fontWeight: 700 }, onClick: () => save(form.id ? 'update' : 'add'), disabled: busy || !form.host.trim() }, busy ? '保存中…' : '保存'),
-          ),
-        ),
-        err ? React.createElement('div', { style: { color: T.danger, fontSize: 13 } }, err) : null,
-      )
-    }
-
-    function parseLs(text) {
-      const out = []
-      for (const ln of String(text || '').split('\n')) {
-        const t = ln.trim()
-        if (!t || !t.length || /^total\b/i.test(t)) continue
-        const parts = t.split(/\s+/).filter(Boolean)
-        if (parts.length < 8) continue
-        const mode = parts[0]
-        const name = parts.slice(8).join(' ')
-        if (!name || name === '.' || name === '..') continue
-        const isDir = mode.charAt(0) === 'd'
-        out.push({ name, dir: isDir })
-      }
-      return out
-    }
-
-    function breadcrumb(active, cur, jumpTo) {
-      const norm = String(cur || '').replace(/\/+$/, '')
-      const segs = norm === '' || norm === '/' ? [] : norm.split('/')
-      const crumbs = []
-      crumbs.push(React.createElement('span', { key: 'root', style: { cursor: active ? 'pointer' : 'default', color: active ? T.ok : T.muted }, onClick: active ? () => jumpTo('/') : undefined }, '/'))
-      let acc = ''
-      for (const s of segs) {
-        if (!s) continue
-        acc += '/' + s
-        crumbs.push(React.createElement('span', { key: s + '|' + acc, style: { color: T.muted } }, '/'))
-        crumbs.push(React.createElement('span', { key: acc, style: { cursor: active ? 'pointer' : 'default', color: active ? T.label : T.muted, fontWeight: acc === norm ? 700 : 400, whiteSpace: 'nowrap' }, onClick: active ? () => jumpTo(acc) : undefined }, s))
-      }
-      if (!crumbs.length) crumbs.push(React.createElement('span', { key: 'empty', style: { color: T.muted } }, '/'))
-      return React.createElement('span', { key: 'crumb' }, crumbs)
-    }
-
-    function DirPicker(props) {
-      const { open, busy, onPicked, onCancel } = props
-      const [tab, setTab] = React.useState('local')
-      const [machines, setMachines] = React.useState([])
-      const [machineId, setMachineId] = React.useState('')
-      const [cur, setCur] = React.useState('/')
-      const [typedPath, setTypedPath] = React.useState('/')
-      const [items, setItems] = React.useState([])
-      const [loading, setLoading] = React.useState(false)
-      const [err, setErr] = React.useState('')
-
-      React.useEffect(() => {
-        if (!open) return
-        api('GET', '/dsh-remote/machines').then((r) => {
-          const ms = r.machines || []; setMachines(ms)
-          const id = r.currentId || (ms[0] && ms[0].id) || ''; setMachineId(id)
-        }).catch(() => {})
-      }, [open])
-
-      const load = (p) => {
-        setLoading(true); setErr('')
-        api('GET', '/dsh-remote/ls?path=' + encodeURIComponent(p) + (machineId ? '&machineId=' + encodeURIComponent(machineId) : ''))
-          .then((r) => { const np = r.path || p; setCur(np); setTypedPath(np); setItems(r.items || []) })
-          .catch((e) => setErr(String((e && e.message) || e))).finally(() => setLoading(false))
-      }
-      React.useEffect(() => { if (open && tab === 'remote' && machineId) load(cur || '/') }, [open, tab, machineId])
-
-      if (!open) return null
-      const chooseLocal = () => {
-        Promise.resolve(WORKSPACES && WORKSPACES.pickDirectory ? WORKSPACES.pickDirectory() : null)
-          .then((p) => { if (p) onPicked(p) }).catch((e) => setErr(String((e && e.message) || e)))
-      }
-      const chooseRemote = () => {
-        const p = typedPath || cur || '/'
-        setLoading(true); setErr('')
-        api('POST', '/dsh-remote/mirror', { path: p, machineId })
-          .then((r) => { if (r && r.localPath) onPicked(r.localPath); else throw new Error('未返回本地镜像路径') })
-          .catch((e) => setErr(String((e && e.message) || e))).finally(() => setLoading(false))
-      }
-      return React.createElement('div', { style: { position: 'fixed', inset: 0, zIndex: 99999, background: 'rgba(0,0,0,.42)', display: 'flex', alignItems: 'center', justifyContent: 'center' } },
-        React.createElement('div', { style: { width: 680, maxHeight: '78vh', overflow: 'hidden', borderRadius: 12, border: '1px solid ' + T.border, background: v('--dsw-alias-bg-layer-0', '#111827'), color: T.label, boxShadow: '0 18px 55px rgba(0,0,0,.35)' } },
-          React.createElement('div', { style: { display: 'flex', borderBottom: '1px solid ' + T.border } },
-            React.createElement('button', { style: { ...ghostBtnS, padding: '12px 18px', borderBottom: tab === 'local' ? '2px solid ' + T.primary : '2px solid transparent' }, onClick: () => setTab('local') }, '本机'),
-            React.createElement('button', { style: { ...ghostBtnS, padding: '12px 18px', borderBottom: tab === 'remote' ? '2px solid ' + T.primary : '2px solid transparent' }, onClick: () => setTab('remote') }, '远程'),
-            React.createElement('div', { style: { flex: 1 } }),
-            React.createElement('button', { style: ghostBtnS, onClick: onCancel }, '关闭')),
-          tab === 'local'
-            ? React.createElement('div', { style: { padding: 28, display: 'flex', flexDirection: 'column', gap: 14, alignItems: 'center' } },
-                React.createElement('div', { style: { opacity: 0.72, fontSize: 13 } }, '使用系统文件夹选择器选择本机工作目录。'),
-                React.createElement('button', { style: primaryBtnS, onClick: chooseLocal, disabled: busy }, busy ? '处理中…' : '选择本机文件夹'))
-            : React.createElement('div', { style: { padding: 16, display: 'flex', flexDirection: 'column', gap: 10 } },
-                React.createElement('div', { style: { display: 'flex', gap: 8, alignItems: 'center' } },
-                  React.createElement('label', { style: { fontSize: 12, opacity: 0.75 } }, '远程机器'),
-                  React.createElement('select', { value: machineId, onChange: (e) => { setMachineId(e.target.value); setCur('/') }, style: inputS },
-                    machines.map((m) => React.createElement('option', { key: m.id, value: m.id }, (m.name || m.host) + ' — ' + m.username + '@' + m.host))),
-                  React.createElement('button', { style: buttonS, onClick: () => load(cur || '/'), disabled: loading || !machineId }, '刷新')),
-                React.createElement('div', { style: { display: 'flex', gap: 8, alignItems: 'center' } },
-                  React.createElement('div', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'monospace', fontSize: 12 } }, breadcrumb(!!machineId, cur, load)),
-                  React.createElement('input', { value: typedPath, onChange: (e) => setTypedPath(e.target.value), onKeyDown: (e) => { if (e.key === 'Enter') load(typedPath || '/') }, style: { ...inputS, maxWidth: 310, fontFamily: 'monospace' } })),
-                React.createElement('div', { style: { minHeight: 260, maxHeight: 340, overflow: 'auto', border: '1px solid ' + T.border, borderRadius: 8 } },
-                  loading ? React.createElement('div', { style: { padding: 20, opacity: .7 } }, '加载中…') :
-                    items.length ? items.map((it) => React.createElement('div', { key: it.name, onDoubleClick: () => { if (it.type === 'dir') load((cur === '/' ? '' : cur) + '/' + it.name) }, style: { display: 'flex', gap: 8, padding: '7px 10px', cursor: it.type === 'dir' ? 'pointer' : 'default', borderBottom: '1px solid ' + T.border } },
-                      React.createElement('span', null, it.type === 'dir' ? '📁' : '📄'), React.createElement('span', null, it.name))) :
-                    React.createElement('div', { style: { padding: 20, opacity: .6 } }, machineId ? '空目录或无法读取' : '请先在“设置 → 远程工作区”添加机器')),
-                err ? React.createElement('div', { style: { color: T.danger, fontSize: 12 } }, err) : null,
-                React.createElement('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: 8 } },
-                  React.createElement('button', { style: buttonS, onClick: onCancel }, '取消'),
-                  React.createElement('button', { style: primaryBtnS, onClick: chooseRemote, disabled: loading || busy || !machineId }, busy ? '处理中…' : '设为远程工作区')))),
-        ))
-    }
-
-    function apply(ctx) {
-      WORKSPACES = ctx.get('workspaces')
-      if (ctx.slots && ctx.slots.register) {
-        ctx.slots.register({ name: 'settings.page', id: 'dsh-remote', title: '远程工作区', order: 40 }, RemoteWorkspacePage)
-      }
-      if (WORKSPACES && typeof WORKSPACES.registerDirectoryPicker === 'function') {
-        const dispose = WORKSPACES.registerDirectoryPicker(DirPicker)
-        if (dispose) ctx.effect(() => dispose, 'dsh-remote.directory-picker')
-      }
-    }
-
-    exports.name = name
-    exports.apply = apply
-    module.exports = exports
-    return module.exports
-  },
-})
-
-diff --git a/lib/index.js b/lib/index.js
-index 93bb92e..5e0b5fd 100644
---- a/lib/index.js
-+++ b/lib/index.js
-@@ -20,6 +20,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
- import ssh2 from 'ssh2'
- import { readFileSync, mkdirSync, writeFileSync, existsSync, readdirSync, statSync } from 'node:fs'
- import { homedir } from 'node:os'
-+import { connect as netConnect } from 'node:net'
- import path from 'node:path'
- 
- const { Client } = ssh2
-@@ -45,6 +46,18 @@ export const Config = z.object({
-   connectTimeoutMs: z.number().step(1).min(1000).default(15000),
-   /** Hard ceiling on collected remote output per call. */
-   maxOutputChars: z.number().step(1).min(1024).default(200000),
-+  /** Enable an SSH reverse tunnel that exposes the local HTTP proxy on the remote loopback. */
-+  proxyEnabled: z.boolean().default(false),
-+  /** Proxy listener on the local Desktop machine. */
-+  localProxyHost: z.string().default('127.0.0.1'),
-+  localProxyPort: z.number().step(1).min(1).max(65535).default(7890),
-+  /** Server-side reverse-forward bind address. Keep loopback unless remote-network exposure is intentional. */
-+  remoteProxyHost: z.string().default('127.0.0.1'),
-+  /** Preferred remote port when automatic allocation is disabled. */
-+  remoteProxyPort: z.number().step(1).min(0).max(65535).default(30503),
-+  /** Let the SSH server choose an unused remote port (forwardIn port 0). */
-+  remoteProxyAuto: z.boolean().default(true),
-+  /** Inject proxy environment variables into rw_exec while the tunnel is active. */
-+  proxyEnvEnabled: z.boolean().default(true),
- })
- 
- // ── shell / path helpers (proven in the read tooling) ───────────────────────
-@@ -171,6 +184,7 @@ function sanitizeMachine(m) {
-   if (!m) return m
-   const { password, ...rest } = m
-   return { ...rest, passwordSet: !!(m.password && m.password.length) }
- }
- /** Apply a machine's fields onto the live config object (pool + tools read it). */
- function applyMachine(config, m) {
-@@ -183,6 +197,13 @@ function applyMachine(config, m) {
-   config.privateKeyPath = m.privateKeyPath || ''
-   config.passphrase = m.passphrase || ''
-   config.workspace = m.workspace || (config.workspace || '')
-+  config.proxyEnabled = m.proxyEnabled === true
-+  config.localProxyHost = m.localProxyHost || '127.0.0.1'
-+  config.localProxyPort = Number(m.localProxyPort) || 7890
-+  config.remoteProxyHost = m.remoteProxyHost || '127.0.0.1'
-+  config.remoteProxyPort = Number(m.remoteProxyPort) || 30503
-+  config.remoteProxyAuto = m.remoteProxyAuto !== false
-+  config.proxyEnvEnabled = m.proxyEnvEnabled !== false
- }
- function machineId() { return 'm-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6) }
- 
-@@ -195,6 +216,9 @@ class SshPool {
-     this.config = config
-     this.client = null
-     this.connecting = null
-+    this.proxyTunnel = null
-+    this.proxyStarting = null
-+    this.proxyLastError = ''
-   }
- 
-   resolveKeyPath() {
-@@ -205,7 +229,7 @@ class SshPool {
-   }
- 
-   /** Configure (and reconnect with) a new target. Returns this pool for chaining. */
--  setTarget({ host, port, username, password, privateKeyPath, passphrase, workspace }) {
-+  setTarget({ host, port, username, password, privateKeyPath, passphrase, workspace, proxyEnabled, localProxyHost, localProxyPort, remoteProxyHost, remoteProxyPort, remoteProxyAuto, proxyEnvEnabled }) {
-     if (host !== undefined) this.config.host = String(host)
-     if (port !== undefined && Number(port)) this.config.port = Number(port)
-     if (username !== undefined) this.config.username = String(username)
-@@ -214,6 +238,13 @@ class SshPool {
-     if (privateKeyPath !== undefined) this.config.privateKeyPath = String(privateKeyPath)
-     if (passphrase !== undefined) this.config.passphrase = String(passphrase)
-     if (workspace !== undefined) this.config.workspace = String(workspace)
-+    if (proxyEnabled !== undefined) this.config.proxyEnabled = proxyEnabled === true
-+    if (localProxyHost !== undefined) this.config.localProxyHost = String(localProxyHost || '127.0.0.1')
-+    if (localProxyPort !== undefined && Number(localProxyPort)) this.config.localProxyPort = Number(localProxyPort)
-+    if (remoteProxyHost !== undefined) this.config.remoteProxyHost = String(remoteProxyHost || '127.0.0.1')
-+    if (remoteProxyPort !== undefined && Number(remoteProxyPort) >= 0) this.config.remoteProxyPort = Number(remoteProxyPort)
-+    if (remoteProxyAuto !== undefined) this.config.remoteProxyAuto = remoteProxyAuto !== false
-+    if (proxyEnvEnabled !== undefined) this.config.proxyEnvEnabled = proxyEnvEnabled !== false
-     this.close()
-     return this
-   }
-@@ -230,6 +261,26 @@ class SshPool {
-   _doConnect() {
-     return new Promise((resolve, reject) => {
-       const client = new Client()
-+      client.on('tcp connection', (info, accept, reject) => {
-+        const tunnel = this.proxyTunnel
-+        if (!tunnel || Number(info.destPort) !== Number(tunnel.remotePort)) {
-+          try { reject() } catch {}
-+          return
-+        }
-+        const channel = accept()
-+        const socket = netConnect({ host: tunnel.localHost, port: tunnel.localPort })
-+        const failSocket = () => {
-+          try { channel.destroy() } catch {}
-+          try { socket.destroy() } catch {}
-+        }
-+        socket.once('error', failSocket)
-+        channel.once('error', failSocket)
-+        socket.once('connect', () => {
-+          socket.removeListener('error', failSocket)
-+          socket.on('error', failSocket)
-+          channel.pipe(socket).pipe(channel)
-+        })
-+      })
-       let settled = false
-       const fail = (err) => {
-         if (settled) return
-@@ -247,6 +298,8 @@ class SshPool {
-       client.on('close', () => {
-         if (this.client === client) this.client = null
-+        this.proxyTunnel = null
-+        this.proxyStarting = null
-         fail(new Error('ssh connection closed'))
-       })
-@@ -278,6 +331,80 @@ class SshPool {
-     })
-   }
-+
-+  proxyStatus() {
-+    return {
-+      enabled: this.config.proxyEnabled === true,
-+      active: !!this.proxyTunnel,
-+      localHost: this.config.localProxyHost || '127.0.0.1',
-+      localPort: Number(this.config.localProxyPort) || 7890,
-+      remoteHost: this.proxyTunnel?.remoteHost || this.config.remoteProxyHost || '127.0.0.1',
-+      remotePort: this.proxyTunnel?.remotePort || (this.config.remoteProxyAuto !== false ? 0 : (Number(this.config.remoteProxyPort) || 30503)),
-+      auto: this.config.remoteProxyAuto !== false,
-+      envEnabled: this.config.proxyEnvEnabled !== false,
-+      lastError: this.proxyLastError || '',
-+    }
-+  }
-+
-+  testLocalProxy(timeoutMs = 1500) {
-+    const host = this.config.localProxyHost || '127.0.0.1'
-+    const port = Number(this.config.localProxyPort) || 7890
-+    return new Promise((resolve, reject) => {
-+      const socket = netConnect({ host, port })
-+      let settled = false
-+      const finish = (err) => {
-+        if (settled) return
-+        settled = true
-+        clearTimeout(timer)
-+        try { socket.destroy() } catch {}
-+        if (err) reject(err); else resolve({ host, port })
-+      }
-+      const timer = setTimeout(() => finish(new Error(`local proxy ${host}:${port} timed out`)), timeoutMs)
-+      socket.once('connect', () => finish())
-+      socket.once('error', (err) => finish(new Error(`local proxy ${host}:${port} unavailable: ${err && err.message}`)))
-+    })
-+  }
-+
-+  startProxyTunnel() {
-+    if (this.proxyTunnel) return Promise.resolve(this.proxyTunnel)
-+    if (this.proxyStarting) return this.proxyStarting
-+    this.proxyStarting = (async () => {
-+      await this.testLocalProxy()
-+      const client = await this.connect()
-+      const remoteHost = this.config.remoteProxyHost || '127.0.0.1'
-+      const requestedPort = this.config.remoteProxyAuto !== false ? 0 : (Number(this.config.remoteProxyPort) || 30503)
-+      const assignedPort = await new Promise((resolve, reject) => {
-+        client.forwardIn(remoteHost, requestedPort, (err, port) => {
-+          if (err) return reject(new Error(`reverse proxy forward failed on ${remoteHost}:${requestedPort || 'auto'}: ${err && err.message}`))
-+          resolve(Number(port) || requestedPort)
-+        })
-+      })
-+      this.proxyTunnel = {
-+        remoteHost,
-+        remotePort: assignedPort,
-+        localHost: this.config.localProxyHost || '127.0.0.1',
-+        localPort: Number(this.config.localProxyPort) || 7890,
-+        startedAt: Date.now(),
-+      }
-+      this.proxyLastError = ''
-+      return this.proxyTunnel
-+    })().catch((err) => {
-+      this.proxyLastError = String((err && err.message) || err)
-+      throw err
-+    }).finally(() => { this.proxyStarting = null })
-+    return this.proxyStarting
-+  }
-+
-+  async stopProxyTunnel() {
-+    const tunnel = this.proxyTunnel
-+    this.proxyTunnel = null
-+    if (!tunnel || !this.client) return false
-+    await new Promise((resolve) => {
-+      this.client.unforwardIn(tunnel.remoteHost, tunnel.remotePort, () => resolve())
-+    })
-+    return true
-+  }
-+
-+  proxyEnvPrefix() {
-+    const tunnel = this.proxyTunnel
-+    if (!tunnel || this.config.proxyEnvEnabled === false) return ''
-+    const url = `http://${tunnel.remoteHost}:${tunnel.remotePort}`
-+    return `export HTTP_PROXY=${shq(url)} HTTPS_PROXY=${shq(url)} ALL_PROXY=${shq(url)} http_proxy=${shq(url)} https_proxy=${shq(url)} all_proxy=${shq(url)}; `
-+  }
- 
-   /** Run one remote command; resolves { code, signal, stdout, stderr }. */
-   exec(command, timeoutMs) {
-@@ -360,6 +487,8 @@ class SshPool {
-   close() {
-     const client = this.client
-     this.client = null
-+    this.proxyTunnel = null
-+    this.proxyStarting = null
-     if (client) {
-       try {
-         client.end()
-@@ -384,7 +513,7 @@ export async function apply(ctx, config) {
-     }
-     // fall back to config-derived default (host set via cordis config)
--    if (config.host) return { id: machineId(), name: config.host, host: config.host, port: config.port, username: config.username, password: config.password, privateKeyPath: config.privateKeyPath, passphrase: config.passphrase }
-+    if (config.host) return { id: machineId(), name: config.host, host: config.host, port: config.port, username: config.username, password: config.password, privateKeyPath: config.privateKeyPath, passphrase: config.passphrase, proxyEnabled: config.proxyEnabled, localProxyHost: config.localProxyHost, localProxyPort: config.localProxyPort, remoteProxyHost: config.remoteProxyHost, remoteProxyPort: config.remoteProxyPort, remoteProxyAuto: config.remoteProxyAuto, proxyEnvEnabled: config.proxyEnvEnabled }
-     return null
-   }
-@@ -398,7 +527,7 @@ export async function apply(ctx, config) {
-     store.currentId = id
-     saveMachines(machines, id)
-     applyMachine(config, machines[i])
--    pool.setTarget({ host: config.host, port: config.port, username: config.username, password: config.password, privateKeyPath: config.privateKeyPath, passphrase: config.passphrase })
-+    pool.setTarget({ host: config.host, port: config.port, username: config.username, password: config.password, privateKeyPath: config.privateKeyPath, passphrase: config.passphrase, proxyEnabled: config.proxyEnabled, localProxyHost: config.localProxyHost, localProxyPort: config.localProxyPort, remoteProxyHost: config.remoteProxyHost, remoteProxyPort: config.remoteProxyPort, remoteProxyAuto: config.remoteProxyAuto, proxyEnvEnabled: config.proxyEnvEnabled })
-     return true
-   }
-@@ -453,6 +582,7 @@ export async function apply(ctx, config) {
-     localMirror: wsPath() ? mirrorDirFor(wsPath(), config.host, config.username, config.port) : '',
-     currentId: store.currentId || null,
-     machines: machines.map(sanitizeMachine),
-+    proxy: pool.proxyStatus(),
-   })
-@@ -679,7 +809,48 @@ export async function apply(ctx, config) {
-       async execute(args) {
-         const cmd = String(args.command || '')
-         if (!cmd) throw new Error('rw_exec: command is required')
--        return { text: await run(cmd, { timeoutMs: config.commandTimeoutMs }) }
-+        let proxyWarning = ''
-+        if (config.proxyEnabled === true && config.proxyEnvEnabled !== false) {
-+          try { await pool.startProxyTunnel() }
-+          catch (err) { proxyWarning = `[proxy tunnel unavailable: ${String((err && err.message) || err)}]\n` }
-+        }
-+        return { text: proxyWarning + await run(pool.proxyEnvPrefix() + cmd, { timeoutMs: config.commandTimeoutMs }) }
-+      },
-+    }),
-+
-+    defineTool({
-+      name: 'rw_proxy_tunnel',
-+      description: 'Inspect, start, stop, or test the SSH reverse proxy tunnel used by remote commands.',
-+      parameters: {
-+        action: { type: 'string', required: true, enum: ['status', 'test', 'start', 'stop'], description: 'Tunnel action' },
-+      },
-+      output: {
-+        schema: { type: 'object', additionalProperties: false, properties: { text: { type: 'string', required: true } } },
-+        render: (_a, a) => [{ type: 'text', text: a.text }],
-+      },
-+      async execute(args) {
-+        const action = String(args.action || 'status')
-+        if (action === 'test') {
-+          const p = await pool.testLocalProxy()
-+          return { text: `Local proxy OK: ${p.host}:${p.port}` }
-+        }
-+        if (action === 'start') {
-+          const t = await pool.startProxyTunnel()
-+          return { text: `Proxy tunnel active: remote ${t.remoteHost}:${t.remotePort} -> local ${t.localHost}:${t.localPort}` }
-+        }
-+        if (action === 'stop') {
-+          const stopped = await pool.stopProxyTunnel()
-+          return { text: stopped ? 'Proxy tunnel stopped.' : 'Proxy tunnel was not active.' }
-+        }
-+        const s = pool.proxyStatus()
-+        return { text: JSON.stringify(s, null, 2) }
-       },
-     }),
-@@ -868,6 +1039,13 @@ export async function apply(ctx, config) {
-               passphrase: body.passphrase !== undefined && String(body.passphrase) !== '' ? String(body.passphrase) : (existing?.passphrase || ''),
-               workspace: existing?.workspace || '',
-+              proxyEnabled: body.proxyEnabled === true,
-+              localProxyHost: String(body.localProxyHost || existing?.localProxyHost || '127.0.0.1'),
-+              localProxyPort: Number(body.localProxyPort) || existing?.localProxyPort || 7890,
-+              remoteProxyHost: String(body.remoteProxyHost || existing?.remoteProxyHost || '127.0.0.1'),
-+              remoteProxyPort: Number(body.remoteProxyPort) || existing?.remoteProxyPort || 30503,
-+              remoteProxyAuto: body.remoteProxyAuto !== false,
-+              proxyEnvEnabled: body.proxyEnvEnabled !== false,
-             }
-@@ -912,6 +1090,30 @@ export async function apply(ctx, config) {
-         return sendJson(res, 405, { ok: false, error: 'method not allowed' })
-       },
-     },
-+    {
-+      kind: 'exact',
-+      path: '/dsh-remote/proxy',
-+      handler: async (req, res) => {
-+        if (req.method === 'GET') return sendJson(res, 200, { ok: true, ...pool.proxyStatus() })
-+        if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'method not allowed' })
-+        try {
-+          const body = JSON.parse((await readBody(req)) || '{}')
-+          const action = String(body.action || 'status')
-+          if (action === 'test') {
-+            const result = await pool.testLocalProxy()
-+            return sendJson(res, 200, { ok: true, action, ...result, ...pool.proxyStatus() })
-+          }
-+          if (action === 'start') {
-+            const tunnel = await pool.startProxyTunnel()
-+            return sendJson(res, 200, { ok: true, action, tunnel, ...pool.proxyStatus() })
-+          }
-+          if (action === 'stop') {
-+            const stopped = await pool.stopProxyTunnel()
-+            return sendJson(res, 200, { ok: true, action, stopped, ...pool.proxyStatus() })
-+          }
-+          return sendJson(res, 200, { ok: true, action: 'status', ...pool.proxyStatus() })
-+        } catch (err) {
-+          return sendJson(res, 200, { ok: false, error: String((err && err.message) || err), ...pool.proxyStatus() })
-+        }
-+      },
-+    },
-     {
-       kind: 'exact',
-       path: '/dsh-remote/test-connect',
-@@ -925,12 +1127,22 @@ export async function apply(ctx, config) {
-             privateKeyPath: String(body.privateKeyPath || config.privateKeyPath),
-             passphrase: String(body.passphrase || ''),
-+            proxyEnabled: body.proxyEnabled === true,
-+            localProxyHost: String(body.localProxyHost || config.localProxyHost || '127.0.0.1'),
-+            localProxyPort: Number(body.localProxyPort) || config.localProxyPort || 7890,
-+            remoteProxyHost: String(body.remoteProxyHost || config.remoteProxyHost || '127.0.0.1'),
-+            remoteProxyPort: Number(body.remoteProxyPort) || config.remoteProxyPort || 30503,
-+            remoteProxyAuto: body.remoteProxyAuto !== false,
-+            proxyEnvEnabled: body.proxyEnvEnabled !== false,
-             connectTimeoutMs: Math.min(Math.max(Number(body.connectTimeoutMs) || config.connectTimeoutMs, 2000), 30000),
-             commandTimeoutMs: 10000,
-           })
-           const started = Date.now()
-           await probe.connect()
-+          let proxy = null
-+          if (probe.config.proxyEnabled === true) proxy = await probe.startProxyTunnel()
-           await probe.exec('true', 10000)
-+          if (proxy) await probe.stopProxyTunnel()
-           probe.close()
--          return sendJson(res, 200, { ok: true, host: probe.config.host, user: probe.config.username, latencyMs: Date.now() - started })
-+          return sendJson(res, 200, { ok: true, host: probe.config.host, user: probe.config.username, latencyMs: Date.now() - started, proxyRemotePort: proxy?.remotePort || null })
-         } catch (err) {
-           return sendJson(res, 200, { ok: false, error: String((err && err.message) || err) })
-         }
-diff --git a/package.json b/package.json
-index 2ca9dcf..6ff56a9 100644
---- a/package.json
-+++ b/package.json
-@@ -1,7 +1,7 @@
- {
-   "name": "dsh-remote",
-   "version": "0.5.7",
--  "description": "Remote-work assistant for DeepSeek Harness: connect SSH (password or key), pick a remote workspace, operate on it with rw_pick_workspace / rw_list_dir / rw_read_file / rw_exec / rw_sync tools, and mirror it to a real local directory (SFTP) so the DSH native workspace can adopt it.",
-+  "description": "Remote-work assistant for DeepSeek Harness with SSH/SFTP workspaces and optional reverse-proxy tunneling.",
-   "license": "MIT",
-   "author": "flymysql <flyphp@outlook.com>",
-   "homepage": "https://github.com/flymysql/dsh-remote",
-@@ -57,5 +57,9 @@
-   "dependencies": {
-     "ssh2": "^1.16.0",
-     "@deepseek-ai/schemastery": "^3.18.1"
--  }
-+  },
-+  "contributors": [
-+    "flymysql <flyphp@outlook.com>",
-+    "plutoczm (Scorpion Desktop integration)"
-+  ]
- }
-          B64
-          base64 -d /tmp/dsh-remote-scorpion.patch.b64 > /tmp/dsh-remote-scorpion.patch
-          git -C third_party/dsh-remote apply --check /tmp/dsh-remote-scorpion.patch
-          git -C third_party/dsh-remote apply /tmp/dsh-remote-scorpion.patch
+          cat .scorpion/proxy.*.b64 | tr -d '\n\r' | base64 -d | gzip -d > /tmp/dsh-remote.patch
+          git -C third_party/dsh-remote apply --check /tmp/dsh-remote.patch
+          git -C third_party/dsh-remote apply /tmp/dsh-remote.patch
           node --check third_party/dsh-remote/lib/index.js
           node --check third_party/dsh-remote/lib/client.js
           node -e "const p=require('./third_party/dsh-remote/package.json'); if(p.name!=='dsh-remote'||p.version!=='0.5.7'||p.license!=='MIT') process.exit(1)"
 
-      - name: Remove redundant Plugin Discovery and keep Plugin Center only
+      - name: Keep Plugin Center as the only marketplace entry
         shell: bash
         run: |
           set -euo pipefail
-          cat > /tmp/plugin-center-index.b64 <<'B64'
-          LyoqIERlc2t0b3AgUGx1Z2luIENlbnRlciBmaXJzdC1sZXZlbCBuYXZpZ2F0aW9uIGFuZCBpbmRl
-          cGVuZGVudCBtYWluIHBhZ2UuICovCgppbXBvcnQgdHlwZSB7fSBmcm9tICdAZGVlcHNlZWstYWkv
-          ZHNoLWNsaWVudC1sb2NhbGUvY2xpZW50JwppbXBvcnQgdHlwZSB7IENsaWVudENvbnRleHQgfSBm
-          cm9tICdAZGVlcHNlZWstYWkvZHNoLWNsaWVudC1ydW50aW1lL2NsaWVudCcKaW1wb3J0IHR5cGUg
-          e30gZnJvbSAnQGRlZXBzZWVrLWFpL2RzaC1jbGllbnQtdWktbGF5b3V0L2NsaWVudCcKaW1wb3J0
-          IHR5cGUge30gZnJvbSAnQGRlZXBzZWVrLWFpL2RzaC1jbGllbnQtdWktc2lkZWJhci9jbGllbnQn
-          CmltcG9ydCB0eXBlIHt9IGZyb20gJ0BkZWVwc2Vlay1haS9kc2gtY2xpZW50LXVpLXNldHRpbmdz
-          L2NsaWVudCcKaW1wb3J0IHsgcmVzb2x2ZUNhdGFsb2dCcmlkZ2UgfSBmcm9tICcuL2JyaWRnZS50
-          cycKaW1wb3J0IHsgUGx1Z2luQ2VudGVyTmF2SXRlbSwgdHlwZSBQbHVnaW5DZW50ZXJOYXZJbmpl
-          Y3RlZCB9IGZyb20gJy4vUGx1Z2luQ2VudGVyTmF2SXRlbS50c3gnCmltcG9ydCB7IFBsdWdpbkNl
-          bnRlclRhYiwgdHlwZSBQbHVnaW5DZW50ZXJUYWJJbmplY3RlZCB9IGZyb20gJy4vUGx1Z2luQ2Vu
-          dGVyVGFiLnRzeCcKaW1wb3J0IHsgZW4sIHpoLCB0eXBlIFBsdWdpbkNlbnRlckxvY2FsZUtleSB9
-          IGZyb20gJy4vbG9jYWxlcy50cycKCmV4cG9ydCB0eXBlIHsgRGVza3RvcENhdGFsb2dCcmlkZ2Ug
-          fSBmcm9tICcuL2JyaWRnZS50cycKZXhwb3J0IHR5cGUgeyBQbHVnaW5DZW50ZXJUYWJJbmplY3Rl
-          ZCwgUGx1Z2luQ2VudGVyVGFiUHJvcHMgfSBmcm9tICcuL1BsdWdpbkNlbnRlclRhYi50c3gnCmV4
-          cG9ydCB0eXBlIHsgUGx1Z2luQ2VudGVyTG9jYWxlS2V5IH0gZnJvbSAnLi9sb2NhbGVzLnRzJwoK
-          ZGVjbGFyZSBtb2R1bGUgJ0BkZWVwc2Vlay1haS9kc2gtY2xpZW50LXVpLXNsb3RzJyB7CiAgaW50
-          ZXJmYWNlIExvY2FsZU5hbWVzcGFjZU1hcCB7CiAgICAvKiogRGVza3RvcCBQbHVnaW4gYW5kIFNr
-          aWxsIEJ1bmRsZSBjYXRhbG9nIGNvcHkuICovCiAgICBwbHVnaW5DZW50ZXI6IFBsdWdpbkNlbnRl
-          ckxvY2FsZUtleQogIH0KfQoKLyoqIERpY3Rpb25hcnkgbmFtZXNwYWNlIG93bmVkIGJ5IHRoaXMg
-          cGx1Z2luLiAqLwpleHBvcnQgY29uc3QgTlMgPSAncGx1Z2luQ2VudGVyJwovKiogU2VydmljZXMg
-          dXNlZCBieSB0aGUgUGx1Z2luIENlbnRlciBjb250cmlidXRpb24uICovCmV4cG9ydCBjb25zdCBp
-          bmplY3QgPSBbJ3Nsb3RzJywgJ2xheW91dCcsICdsb2NhbGUnLCAnc2V0dGluZ3NOYXZpZ2F0aW9u
-          J10KCmNvbnN0IFBMVUdJTl9DRU5URVJfUEFHRV9JRCA9ICdwbHVnaW4tY2VudGVyJwoKLyoqIEFk
-          ZCB0aGUgRGVza3RvcC1vbmx5IFBsdWdpbiBDZW50ZXIgYXMgdGhlIHNpbmdsZSBmaXJzdC1sZXZl
-          bCBwbHVnaW4gbWFya2V0cGxhY2UgcGFnZS4gKi8KZXhwb3J0IGZ1bmN0aW9uIGFwcGx5KGN0eDog
-          Q2xpZW50Q29udGV4dCk6IHZvaWQgewogIGN0eC5lZmZlY3QoKCkgPT4gY3R4LmxvY2FsZS5yZWdp
-          c3RlcihOUywgeyB6aCwgZW4gfSksICd1aS1wbHVnaW4tY2VudGVyOiBkaWN0aW9uYXJpZXMnKQog
-          IGNvbnN0IHJlc29sdmVkID0gcmVzb2x2ZUNhdGFsb2dCcmlkZ2UoKQogIGNvbnN0IGJyaWRnZSA9
-          IHJlc29sdmVkLmJyaWRnZQogIGNvbnN0IHVuYXZhaWxhYmxlID0gKCk6IFByb21pc2U8bmV2ZXI+
-          ID0+IFByb21pc2UucmVqZWN0KG5ldyBFcnJvcignRGVza3RvcCBjYXRhbG9nIGJyaWRnZSB1bmF2
-          YWlsYWJsZScpKQogIGNvbnN0IGluamVjdGVkID0gKCk6IFBsdWdpbkNlbnRlclRhYkluamVjdGVk
-          ID0+ICh7CiAgICBhdmFpbGFibGU6IGJyaWRnZSAhPT0gdW5kZWZpbmVkLAogICAgZGV2ZWxvcG1l
-          bnQ6IHJlc29sdmVkLmRldmVsb3BtZW50LAogICAgbGlzdDogcXVlcnkgPT4gYnJpZGdlID09PSB1
-          bmRlZmluZWQgPyB1bmF2YWlsYWJsZSgpIDogYnJpZGdlLmNhdGFsb2cubGlzdChxdWVyeSksCiAg
-          ICByZWZyZXNoOiBxdWVyeSA9PiBicmlkZ2UgPT09IHVuZGVmaW5lZCA/IHVuYXZhaWxhYmxlKCkg
-          OiBicmlkZ2UuY2F0YWxvZy5yZWZyZXNoKHF1ZXJ5KSwKICAgIGRldGFpbDogcXVlcnkgPT4gYnJp
-          ZGdlID09PSB1bmRlZmluZWQgPyB1bmF2YWlsYWJsZSgpIDogYnJpZGdlLmNhdGFsb2cuZGV0YWls
-          KHF1ZXJ5KSwKICAgIGNoZWNrQ29tcGF0aWJpbGl0eTogcmVxdWVzdCA9PiBicmlkZ2UgPT09IHVu
-          ZGVmaW5lZCA/IHVuYXZhaWxhYmxlKCkgOiBicmlkZ2UuY2F0YWxvZy5jaGVja0NvbXBhdGliaWxp
-          dHkocmVxdWVzdCksCiAgICBsaXN0SW5zdGFsbGVkOiAoKSA9PiBicmlkZ2UgPT09IHVuZGVmaW5l
-          ZCA/IHVuYXZhaWxhYmxlKCkgOiBicmlkZ2UuaW5zdGFsbGVkUGx1Z2lucy5saXN0KCksCiAgICBv
-          cGVuUGx1Z2luU2V0dGluZ3M6ICh0YWJJZCkgPT4geyBjdHguc2V0dGluZ3NOYXZpZ2F0aW9uLm9w
-          ZW4oeyBzZWN0aW9uSWQ6ICdwbHVnaW5zJywgdGFiSWQgfSkgfSwKICAgIG11dGF0aW9uc0VuYWJs
-          ZWQ6IGJyaWRnZT8ucGx1Z2luT3BlcmF0aW9ucy5tdXRhdGlvbnNFbmFibGVkID8/IGZhbHNlLAog
-          ICAgaW5zdGFsbDogcmVxdWVzdCA9PiBicmlkZ2UgPT09IHVuZGVmaW5lZCA/IHVuYXZhaWxhYmxl
-          KCkgOiBicmlkZ2UucGx1Z2luT3BlcmF0aW9ucy5pbnN0YWxsKHJlcXVlc3QpLAogICAgbWFuYWdl
-          OiByZXF1ZXN0ID0+IGJyaWRnZSA9PT0gdW5kZWZpbmVkID8gdW5hdmFpbGFibGUoKSA6IGJyaWRn
-          ZS5wbHVnaW5PcGVyYXRpb25zLm1hbmFnZShyZXF1ZXN0KSwKICAgIGdldE93bmVkRGF0YU9mZmVy
-          OiAoKSA9PiBicmlkZ2UgPT09IHVuZGVmaW5lZCA/IFByb21pc2UucmVzb2x2ZShudWxsKSA6IGJy
-          aWRnZS5wbHVnaW5Pd25lZERhdGEuZ2V0T2ZmZXIoKSwKICAgIHJlbW92ZU93bmVkRGF0YTogcmVx
-          dWVzdCA9PiBicmlkZ2UgPT09IHVuZGVmaW5lZCA/IHVuYXZhaWxhYmxlKCkgOiBicmlkZ2UucGx1
-          Z2luT3duZWREYXRhLnJlbW92ZShyZXF1ZXN0KSwKICAgIHJldGFpbk93bmVkRGF0YTogcmVxdWVz
-          dCA9PiBicmlkZ2UgPT09IHVuZGVmaW5lZCA/IHVuYXZhaWxhYmxlKCkgOiBicmlkZ2UucGx1Z2lu
-          T3duZWREYXRhLnJldGFpbihyZXF1ZXN0KSwKICAgIGdldE9wZXJhdGlvbjogKCkgPT4gYnJpZGdl
-          ID09PSB1bmRlZmluZWQgPyBQcm9taXNlLnJlc29sdmUobnVsbCkgOiBicmlkZ2UucGx1Z2luT3Bl
-          cmF0aW9ucy5nZXRPcGVyYXRpb24oKSwKICAgIG9uT3BlcmF0aW9uU3RhdGU6IGxpc3RlbmVyID0+
-          IGJyaWRnZSA9PT0gdW5kZWZpbmVkID8gKCkgPT4ge30gOiBicmlkZ2UucGx1Z2luT3BlcmF0aW9u
-          cy5vblN0YXRlKGxpc3RlbmVyKSwKICAgIGdldFJlY292ZXJ5OiAoKSA9PiBicmlkZ2U/LnBsdWdp
-          blJlY292ZXJ5Py5nZXRTdGF0ZSgpID8/IFByb21pc2UucmVzb2x2ZShudWxsKSwKICAgIHJldHJ5
-          UmVjb3Zlcnk6IHJlcXVlc3QgPT4gYnJpZGdlPy5wbHVnaW5SZWNvdmVyeSA9PT0gdW5kZWZpbmVk
-          CiAgICAgID8gdW5hdmFpbGFibGUoKQogICAgICA6IGJyaWRnZS5wbHVnaW5SZWNvdmVyeS5yZXRy
-          eShyZXF1ZXN0KSwKICAgIGV4cG9ydFJlY292ZXJ5RGlhZ25vc3RpY3M6IHJlcXVlc3QgPT4gYnJp
-          ZGdlPy5wbHVnaW5SZWNvdmVyeSA9PT0gdW5kZWZpbmVkCiAgICAgID8gdW5hdmFpbGFibGUoKQog
-          ICAgICA6IGJyaWRnZS5wbHVnaW5SZWNvdmVyeS5leHBvcnREaWFnbm9zdGljcyhyZXF1ZXN0KSwK
-          ICAgIG9uUmVjb3ZlcnlTdGF0ZTogbGlzdGVuZXIgPT4gYnJpZGdlPy5wbHVnaW5SZWNvdmVyeT8u
-          b25TdGF0ZShsaXN0ZW5lcikgPz8gKCgpID0+IHt9KSwKICB9KQoKICBjb25zdCBuYXZJbmplY3Rl
-          ZCA9ICgpOiBQbHVnaW5DZW50ZXJOYXZJbmplY3RlZCA9PiAoewogICAgcGFnZUlkOiBQTFVHSU5f
-          Q0VOVEVSX1BBR0VfSUQsCiAgICBvcGVuOiAoKSA9PiB7IGN0eC5sYXlvdXQub3BlblByaW1hcnlQ
-          YWdlKFBMVUdJTl9DRU5URVJfUEFHRV9JRCkgfSwKICB9KQoKICBjdHguc2xvdHMuaW5qZWN0KCdz
-          aWRlYmFyLnByaW1hcnkuYWN0aW9uJywgKCkgPT4gY3R4LnNsb3RzLnJlZ2lzdGVyKHsKICAgIG5h
-          bWU6ICdzaWRlYmFyLnByaW1hcnkuYWN0aW9uJywKICAgIGlkOiBQTFVHSU5fQ0VOVEVSX1BBR0Vf
-          SUQsCiAgICBvcmRlcjogMjAsCiAgICBsb2NhbGU6IE5TLAogICAgaW5qZWN0OiBuYXZJbmplY3Rl
-          ZCwKICB9LCBQbHVnaW5DZW50ZXJOYXZJdGVtKSkKICBjdHguc2xvdHMuaW5qZWN0KCdtYWluLnBh
-          Z2UnLCAoKSA9PiBjdHguc2xvdHMucmVnaXN0ZXIoewogICAgbmFtZTogJ21haW4ucGFnZScsCiAg
-          IBrZXk6IFBMVUdJTl9DRU5URVJfUEFHRV9JRCwKICAgIGxvY2FsZTogTlMsCiAgICBpbmplY3Q6
-          IGluamVjdGVkLAogIH0sIFBsdWdpbkNlbnRlclRhYikpCiAgY3R4LmVmZmVjdCgKICAgICgpID0+
-          ICgpID0+IHsgY3R4LmxheW91dC5jbG9zZVByaW1hcnlQYWdlKFBMVUdJTl9DRU5URVJfUEFHRV9J
-          RCkgfSwKICAgICd1aS1wbHVnaW4tY2VudGVyOiBjbG9zZSBzZWxlY3RlZCBwYWdlIG9uIHRlYXJk
-          b3duJywKICApCn0K
-          B64
-          base64 -d /tmp/plugin-center-index.b64 > packages/client/ui-plugin-center/src/client/index.ts
-          cat > /tmp/plugin-center-test.b64 <<'B64'
-          Ly8gQHZpdGVzdC1lbnZpcm9ubWVudCBqc2RvbQppbXBvcnQgeyBDb250ZXh0IH0gZnJvbSAnQGRl
-          ZXBzZWVrLWFpL2NvcmRpcycKaW1wb3J0IHsgYWZ0ZXJFYWNoLCBkZXNjcmliZSwgZXhwZWN0LCBp
-          dCwgdmkgfSBmcm9tICd2aXRlc3QnCmltcG9ydCB7IExvY2FsZVJ1bnRpbWUgfSBmcm9tICdAZGVl
-          cHNlZWstYWkvZHNoLWNsaWVudC1sb2NhbGUvY2xpZW50JwppbXBvcnQgeyBTbG90UmVnaXN0cnkg
-          fSBmcm9tICdAZGVlcHNlZWstYWkvZHNoLWNsaWVudC1ydW50aW1lL2NsaWVudCcKaW1wb3J0IHsg
-          dXNlUGlubmVkQnJvd3Nlckxhbmd1YWdlcyB9IGZyb20gJ0BkZWVwc2Vlay1haS9kc2gtY2xpZW50
-          LXRlc3QtcnVudGltZScKaW1wb3J0IHsgYXBwbHksIGluamVjdCwgTlMgfSBmcm9tICcuLi9zcmMv
-          Y2xpZW50L2luZGV4LnRzJwppbXBvcnQgeyBQbHVnaW5DZW50ZXJOYXZJdGVtLCB0eXBlIFBsdWdp
-          bkNlbnRlck5hdkluamVjdGVkIH0gZnJvbSAnLi4vc3JjL2NsaWVudC9QbHVnaW5DZW50ZXJOYXZJ
-          dGVtLnRzeCcKaW1wb3J0IHsgUGx1Z2luQ2VudGVyVGFiLCB0eXBlIFBsdWdpbkNlbnRlclRhYklu
-          amVjdGVkIH0gZnJvbSAnLi4vc3JjL2NsaWVudC9QbHVnaW5DZW50ZXJUYWIudHN4JwppbXBvcnQg
-          eyBjb21wYXRpYmlsaXR5RGVjaXNpb24sIGluc3RhbGxlZExpc3RSZXN1bHQsIGxpc3RSZXN1bHQg
-          fSBmcm9tICcuL2ZpeHR1cmVzLnRzJwoKdXNlUGlubmVkQnJvd3Nlckxhbmd1YWdlcygnemgtQ04n
-          KQoKYWZ0ZXJFYWNoKCgpID0+IHsKICBkZWxldGUgKHdpbmRvdyBhcyB1bmtub3duIGFzIHsgZHNo
-          RGVza3RvcD86IHVua25vd24gfSkuZHNoRGVza3RvcAogIGRlbGV0ZSAod2luZG93IGFzIHVua25v
-          d24gYXMgeyBfX0RTSF9QTFVHSU5fQ0VOVEVSX0RFVl9fPzogdW5rbm93biB9KS5fX0RTSF9QTFVH
-          SU5fQ0VOVEVSX0RFVl9fCn0pCgphc3luYyBmdW5jdGlvbiBiZW5jaCh3aXRoQnJpZGdlOiBib29s
-          ZWFuKSB7CiAgY29uc3QgY3R4ID0gbmV3IENvbnRleHQoKQogIGF3YWl0IGN0eC5wbHVnaW4oU2xv
-          dFJlZ2lzdHJ5KS5hd2FpdCgpCiAgY29uc3QgbG9jYWxlID0gbmV3IExvY2FsZVJ1bnRpbWUoY3R4
-          KQogIGNvbnN0IGxheW91dCA9IHsgb3BlblByaW1hcnlQYWdlOiB2aS5mbigpLCBjbG9zZVByaW1h
-          cnlQYWdlOiB2aS5mbigpIH0KICBjb25zdCBzZXR0aW5nc05hdmlnYXRpb24gPSB7IG9wZW46IHZp
-          LmZuKCksIHN1YnNjcmliZTogdmkuZm4oKCkgPT4gKCkgPT4ge30pIH0KICBjdHgucHJvdmlkZSgn
-          bG9jYWxlJywgbG9jYWxlKQogIGN0eC5wcm92aWRlKCdsYXlvdXQnLCBsYXlvdXQgYXMgbmV2ZXIp
-          CiAgY3R4LnByb3ZpZGUoJ3NldHRpbmdzTmF2aWdhdGlvbicsIHNldHRpbmdzTmF2aWdhdGlvbiBh
-          cyBuZXZlcikKICBjb25zdCBsaXN0ID0gdmkuZm48UGx1Z2luQ2VudGVyVGFiSW5qZWN0ZWRbJ2xp
-          c3QnXT4oYXN5bmMgcXVlcnkgPT4gbGlzdFJlc3VsdChxdWVyeSkpCiAgY29uc3QgcmVmcmVzaCA9
-          IHZpLmZuPFBsdWdpbkNlbnRlclRhYkluamVjdGVkWydyZWZyZXNoJ10+KGFzeW5jIHF1ZXJ5ID0+
-          IGxpc3RSZXN1bHQocXVlcnkpKQogIGNvbnN0IGRldGFpbCA9IHZpLmZuKGFzeW5jICgpID0+ICh7
-          CiAgICBldGFnOiAnZml4dHVyZS12MScsIGdlbmVyYXRlZEF0OiAnMjAyNi0wOC0xNVQwNDowMDow
-          MC4wMDBaJywgZnJlc2huZXNzOiAnZnJlc2gnLCBzb3VyY2U6ICduZXR3b3JrJywgZGV0YWlsOiBu
-          dWxsLAogIH0gYXMgY29uc3QpKQogIGNvbnN0IGNoZWNrQ29tcGF0aWJpbGl0eSA9IHZpLmZuKGFz
-          eW5jICgpID0+IGNvbXBhdGliaWxpdHlEZWNpc2lvbigpKQogIGNvbnN0IGxpc3RJbnN0YWxsZWQg
-          PSB2aS5mbihhc3luYyAoKSA9PiBpbnN0YWxsZWRMaXN0UmVzdWx0KCkpCiAgY29uc3QgaW5zdGFs
-          bCA9IHZpLmZuKGFzeW5jICgpID0+IHsgdGhyb3cgbmV3IEVycm9yKCdyZWxlYXNlIGdhdGVkJykg
-          fSkKICBjb25zdCBtYW5hZ2UgPSB2aS5mbihhc3luYyAoKSA9PiB7IHRocm93IG5ldyBFcnJvcign
-          cmVsZWFzZSBnYXRlZCcpIH0pCiAgY29uc3QgZ2V0T3BlcmF0aW9uID0gdmkuZm4oYXN5bmMgKCkg
-          PT4gbnVsbCkKICBjb25zdCBvblN0YXRlID0gdmkuZm4oKCkgPT4gKCkgPT4ge30pCiAgY29uc3Qg
-          Z2V0T3duZWREYXRhT2ZmZXIgPSB2aS5mbihhc3luYyAoKSA9PiBudWxsKQogIGNvbnN0IHJlbW92
-          ZU93bmVkRGF0YSA9IHZpLmZuKGFzeW5jIChyZXF1ZXN0OiB7IG9wZXJhdGlvbklkOiBzdHJpbmc7
-          IHBsdWdpbklkOiBzdHJpbmc7IHBhdGhzOiByZWFkb25seSBzdHJpbmdbXSB9KSA9PiAoewogICAg
-          b3BlcmF0aW9uSWQ6IHJlcXVlc3Qub3BlcmF0aW9uSWQsCiAgICBwbHVnaW5JZDogcmVxdWVzdC5w
-          bHVnaW5JZCwKICAgIHJlbW92ZWRQYXRoczogcmVxdWVzdC5wYXRocywKICB9KSkKICBjb25zdCBy
-          ZXRhaW5Pd25lZERhdGEgPSB2aS5mbihhc3luYyAocmVxdWVzdDogeyBvcGVyYXRpb25JZDogc3Ry
-          aW5nOyBwbHVnaW5JZDogc3RyaW5nIH0pID0+ICh7CiAgICBvcGVyYXRpb25JZDogcmVxdWVzdC5v
-          cGVyYXRpb25JZCwKICAgIHBsdWdpbklkOiByZXF1ZXN0LnBsdWdpbklkLAogICAgcmV0YWluZWQ6
-          IHRydWUgYXMgY29uc3QsCiAgfSkpCiAgaWYgKHdpdGhCcmlkZ2UpIHsKICAgIE9iamVjdC5kZWZp
-          bmVQcm9wZXJ0eSh3aW5kb3csICdkc2hEZXNrdG9wJywgewogICAgICBjb25maWd1cmFibGU6IHRy
-          dWUsCiAgICAgIHZhbHVlOiB7CiAgICAgICAgY2F0YWxvZzogeyBsaXN0LCByZWZyZXNoLCBkZXRh
-          aWwsIGNoZWNrQ29tcGF0aWJpbGl0eSB9LAogICAgICAgIGluc3RhbGxlZFBsdWdpbnM6IHsgbGlz
-          dDogbGlzdEluc3RhbGxlZCB9LAogICAgICAgIHBsdWdpbk9wZXJhdGlvbnM6IHsgbXV0YXRpb25z
-          RW5hYmxlZDogZmFsc2UsIGluc3RhbGwsIG1hbmFnZSwgZ2V0T3BlcmF0aW9uLCBvblN0YXRlIH0s
-          CiAgICAgICAgcGx1Z2luT3duZWREYXRhOiB7IGdldE9mZmVyOiBnZXRPd25lZERhdGFPZmZlciwg
-          cmVtb3ZlOiByZW1vdmVPd25lZERhdGEsIHJldGFpbjogcmV0YWluT3duZWREYXRhIH0sCiAgICAg
-          IH0sCiAgICB9KQogIH0KICByZXR1cm4gewogICAgY3R4LCBzbG90czogY3R4LmdldCgnc2xvdHMn
-          KSBhcyBTbG90UmVnaXN0cnksIGxvY2FsZSwgbGF5b3V0LCBzZXR0aW5nc05hdmlnYXRpb24sCiAg
-          ICBsaXN0LCByZWZyZXNoLCBkZXRhaWwsIGNoZWNrQ29tcGF0aWJpbGl0eSwgbGlzdEluc3RhbGxl
-          ZCwgaW5zdGFsbCwgbWFuYWdlLCBnZXRPcGVyYXRpb24sIG9uU3RhdGUsCiAgICBnZXRPd25lZERh
-          dGFPZmZlciwgcmVtb3ZlT3duZWREYXRhLCByZXRhaW5Pd25lZERhdGEsCiAgfQp9CgpmdW5jdGlv
-          biBkZWNsYXJlKHNsb3RzOiBTbG90UmVnaXN0cnkpOiAoKSA9PiB2b2lkIHsKICByZXR1cm4gc2xv
-          dHMucmVnaXN0ZXIoewogICAgbmFtZTogJ3Jvb3QnLAogICAgY2hpbGRyZW46IHsKICAgICAgJ3Np
-          ZGViYXIucHJpbWFyeS5hY3Rpb24nOiB7IGtpbmQ6ICdsaXN0Jywgc2NvcGU6ICdyb290JyB9LAog
-          ICAgICAnbWFpbi5wYWdlJzogeyBraW5kOiAna2V5ZWQnLCBzY29wZTogJ3Jvb3QnIH0sCiAgICB9
-          LAogIH0gYXMgbmV2ZXIsICgpID0+IG51bGwpCn0KCmRlc2NyaWJlKCd1aS1wbHVnaW4tY2VudGVy
-          IGJyb3dzZXIgcGx1Z2luJywgKCkgPT4gewogIGl0KCdyZWdpc3RlcnMgUGx1Z2luIENlbnRlciBh
-          cyB0aGUgb25seSBwbHVnaW4tbWFya2V0IHBhZ2UnLCBhc3luYyAoKSA9PiB7CiAgICBjb25zdCBi
-          ID0gYXdhaXQgYmVuY2godHJ1ZSkKICAgIGRlY2xhcmUoYi5zbG90cykKICAgIGF3YWl0IGIuY3R4
-          LnBsdWdpbih7IGluamVjdDogWy4uLmluamVjdF0sIGFwcGx5IH0pLmF3YWl0KCkKCiAgICBleHBl
-          Y3QoaW5qZWN0KS50b0VxdWFsKFsnc2xvdHMnLCAnbGF5b3V0JywgJ2xvY2FsZScsICdzZXR0aW5n
-          c05hdmlnYXRpb24nXSkKICAgIGNvbnN0IG5hdnMgPSBiLnNsb3RzLmVudHJpZXMoJ3NpZGViYXIu
-          cHJpbWFyeS5hY3Rpb24nKQogICAgY29uc3QgcGFnZXMgPSBiLnNsb3RzLmVudHJpZXMoJ21haW4u
-          cGFnZScpCiAgICBleHBlY3QobmF2cykudG9IYXZlTGVuZ3RoKDEpCiAgICBleHBlY3QocGFnZXMp
-          LnRvSGF2ZUxlbmd0aCgxKQogICAgZXhwZWN0KG5hdnMuc29tZShlbnRyeSA9PiBlbnRyeS5vcHRp
-          b25zLmlkID09PSAncGx1Z2luLWRpc2NvdmVyeScpKS50b0JlKGZhbHNlKQogICAgZXhwZWN0KHBh
-          Z2VzLnNvbWUoZW50cnkgPT4gZW50cnkub3B0aW9ucy5rZXkgPT09ICdwbHVnaW4tZGlzY292ZXJ5
-          JykpLnRvQmUoZmFsc2UpCgogICAgY29uc3QgbmF2ID0gbmF2c1swXSEKICAgIGNvbnN0IHBhZ2Ug
-          PSBwYWdlc1swXSEKICAgIGV4cGVjdChuYXYuY29tcG9uZW50KS50b0JlKFBsdWdpbkNlbnRlck5h
-          dkl0ZW0pCiAgICBleHBlY3QobmF2Lm9wdGlvbnMpLnRvTWF0Y2hPYmplY3QoeyBpZDogJ3BsdWdp
-          bi1jZW50ZXInLCBvcmRlcjogMjAgfSkKICAgIGV4cGVjdChwYWdlLmNvbXBvbmVudCkudG9CZShQ
-          bHVnaW5DZW50ZXJUYWIpCiAgICBleHBlY3QocGFnZS5vcHRpb25zKS50b01hdGNoT2JqZWN0KHsg
-          a2V5OiAncGx1Z2luLWNlbnRlcicgfSkKICAgIGV4cGVjdChuYXYubG9jYWxlKS50b0JlKE5TKQog
-          ICAgZXhwZWN0KHBhZ2UubG9jYWxlKS50b0JlKE5TKQoKICAgIGNvbnN0IG5hdkZhY2UgPSAobmF2
-          LmluamVjdCBhcyB1bmtub3duIGFzICgpID0+IFBsdWdpbkNlbnRlck5hdkluamVjdGVkKSgpCiAg
-          ICBuYXZGYWNlLm9wZW4oKQogICAgZXhwZWN0KGIubGF5b3V0Lm9wZW5QcmltYXJ5UGFnZSkudG9I
-          YXZlQmVlbkNhbGxlZFdpdGgoJ3BsdWdpbi1jZW50ZXInKQoKICAgIGNvbnN0IGZhY2UgPSAocGFn
-          ZS5pbmplY3QgYXMgdW5rbm93biBhcyAoKSA9PiBQbHVnaW5DZW50ZXJUYWJJbmplY3RlZCkoKQog
-          ICAgZXhwZWN0KGZhY2UuYXZhaWxhYmxlKS50b0JlKHRydWUpCiAgICBleHBlY3QoZmFjZS5kZXZl
-          bG9wbWVudCkudG9CZShmYWxzZSkKICAgIGV4cGVjdChmYWNlLm11dGF0aW9uc0VuYWJsZWQpLnRv
-          QmUoZmFsc2UpCiAgICBjb25zdCBxdWVyeSA9IHsgY2F0YWxvZ0tpbmQ6ICdwbHVnaW4nLCBzY29w
-          ZTogJ3B1YmxpYycsIHF1ZXJ5OiAnJywgbGltaXQ6IDI0IH0gYXMgY29uc3QKICAgIGF3YWl0IGZh
-          Y2UubGlzdChxdWVyeSkKICAgIGF3YWl0IGZhY2UucmVmcmVzaChxdWVyeSkKICAgIGF3YWl0IGZh
-          Y2UuZGV0YWlsKHsgcGx1Z2luSWQ6ICdmaXh0dXJlLndvcmtzcGFjZS10b29scycsIHZlcnNpb246
-          ICcxLjAuMCcgfSkKICAgIGF3YWl0IGZhY2UuY2hlY2tDb21wYXRpYmlsaXR5KHsgcGx1Z2luSWQ6
-          ICdmaXh0dXJlLndvcmtzcGFjZS10b29scycsIHZlcnNpb246ICcxLjAuMCcsIGFjdGlvbjogJ2lu
-          c3RhbGwnIH0pCiAgICBhd2FpdCBmYWNlLmxpc3RJbnN0YWxsZWQoKQogICAgZmFjZS5vcGVuUGx1
-          Z2luU2V0dGluZ3MoJ2FsbCcpCiAgICBhd2FpdCBmYWNlLmdldE9wZXJhdGlvbigpCiAgICBhd2Fp
-          dCBmYWNlLmdldE93bmVkRGF0YU9mZmVyPy4oKQogICAgYXdhaXQgZmFjZS5yZW1vdmVPd25lZERh
-          dGEoewogICAgICBvcGVyYXRpb25JZDogJ29wZXJhdGlvbi0xJywgcGx1Z2luSWQ6ICdmaXh0dXJl
-          LndvcmtzcGFjZS10b29scycsIHBhdGhzOiBbJ2NhY2hlJ10sIGNvbmZpcm1hdGlvbjogJ3JlbW92
-          ZS1vd25lZC1kYXRhJywKICAgIH0pCiAgICBhd2FpdCBmYWNlLnJldGFpbk93bmVkRGF0YT8uKHsK
-          ICAgICAgb3BlcmF0aW9uSWQ6ICdvcGVyYXRpb24tMScsIHBsdWdpbklkOiAnZml4dHVyZS53b3Jr
-          c3BhY2UtdG9vbHMnLCBjb25maXJtYXRpb246ICdyZXRhaW4tb3duZWQtZGF0YScsCiAgICB9KQog
-          ICAgY29uc3Qgc3RvcCA9IGZhY2Uub25PcGVyYXRpb25TdGF0ZSgoKSA9PiB7fSkKICAgIHN0b3Ao
-          KQogICAgZXhwZWN0KGIubGlzdCkudG9IYXZlQmVlbkNhbGxlZFdpdGgocXVlcnkpCiAgICBleHBl
-          Y3QoYi5yZWZyZXNoKS50b0hhdmVCZWVuQ2FsbGVkV2l0aChxdWVyeSkKICAgIGV4cGVjdChiLmRl
-          dGFpbCkudG9IYXZlQmVlbkNhbGxlZFdpdGgoeyBwbHVnaW5JZDogJ2ZpeHR1cmUud29ya3NwYWNl
-          LXRvb2xzJywgdmVyc2lvbjogJzEuMC4wJyB9KQogICAgZXhwZWN0KGIuY2hlY2tDb21wYXRpYmls
-          aXR5KS50b0hhdmVCZWVuQ2FsbGVkV2l0aCh7IHBsdWdpbklkOiAnZml4dHVyZS53b3Jrc3BhY2Ut
-          dG9vbHMnLCB2ZXJzaW9uOiAnMS4wLjAnLCBhY3Rpb246ICdpbnN0YWxsJyB9KQogICAgZXhwZWN0
-          KGIubGlzdEluc3RhbGxlZCkudG9IYXZlQmVlbkNhbGxlZE9uY2UoKQogICAgZXhwZWN0KGIuc2V0
-          dGluZ3NOYXZpZ2F0aW9uLm9wZW4pLnRvSGF2ZUJlZW5DYWxsZWRXaXRoKHsgc2VjdGlvbklkOiAn
-          cGx1Z2lucycsIHRhYklkOiAnYWxsJyB9KQogICAgZXhwZWN0KGIuZ2V0T3BlcmF0aW9uKS50b0hh
-          dmVCZWVuQ2FsbGVkT25jZSgpCiAgICBleHBlY3QoYi5vblN0YXRlKS50b0hhdmVCZWVuQ2FsbGVk
-          T25jZSgpCiAgICBleHBlY3QoYi5nZXRPd25lZERhdGFPZmZlcikudG9IYXZlQmVlbkNhbGxlZE9u
-          Y2UoKQogICAgZXhwZWN0KGIucmVtb3ZlT3duZWREYXRhKS50b0hhdmVCZWVuQ2FsbGVkT25jZSgp
-          CiAgICBleHBlY3QoYi5yZXRhaW5Pd25lZERhdGEpLnRvSGF2ZUJlZW5DYWxsZWRPbmNlKCkKCiAg
-          ICBhd2FpdCBiLmN0eC5maWJlci5kaXNwb3NlKCkKICAgIGV4cGVjdChiLmxheW91dC5jbG9zZVBy
-          aW1hcnlQYWdlKS50b0hhdmVCZWVuQ2FsbGVkV2l0aCgncGx1Z2luLWNlbnRlcicpCiAgICBleHBl
-          Y3QoYi5sYXlvdXQuY2xvc2VQcmltYXJ5UGFnZSkubm90LnRvSGF2ZUJlZW5DYWxsZWRXaXRoKCdw
-          bHVnaW4tZGlzY292ZXJ5JykKICB9KQoKICBpdCgnc3Vydml2ZXMgbGF0ZSBkZWNsYXJhdGlvbiBh
-          bmQgZXhwb3NlcyBhIHJlYWQtb25seSBicm93c2VyIGFic2VuY2UgZmFjZScsIGFzeW5jICgpID0+
-          IHsKICAgIGNvbnN0IGIgPSBhd2FpdCBiZW5jaChmYWxzZSkKICAgIGNvbnN0IGZpYmVyID0gYi5j
-          dHgucGx1Z2luKHsgaW5qZWN0OiBbLi4uaW5qZWN0XSwgYXBwbHkgfSkKICAgIGF3YWl0IGZpYmVy
-          LmF3YWl0KCkKICAgIGV4cGVjdChiLnNsb3RzLmVudHJpZXMoJ21haW4ucGFnZScpKS50b0hhdmVM
-          ZW5ndGgoMCkKICAgIGNvbnN0IHN0b3AgPSBkZWNsYXJlKGIuc2xvdHMpCiAgICBhd2FpdCB2aS53
-          YWl0Rm9yKCgpID0+IHsKICAgICAgZXhwZWN0KGIuc2xvdHMuZW50cmllcygnc2lkZWJhci5wcmlt
-          YXJ5LmFjdGlvbicpKS50b0hhdmVMZW5ndGgoMSkKICAgICAgZXhwZWN0KGIuc2xvdHMuZW50cmll
-          cygnbWFpbi5wYWdlJykpLnRvSGF2ZUxlbmd0aCgxKQogICAgfSkKICAgIGNvbnN0IHBsdWdpbkNl
-          bnRlclBhZ2UgPSBiLnNsb3RzLmVudHJpZXMoJ21haW4ucGFnZScpWzBdIQogICAgY29uc3QgZmFj
-          ZSA9IChwbHVnaW5DZW50ZXJQYWdlLmluamVjdCBhcyB1bmtub3duIGFzICgpID0+IFBsdWdpbkNl
-          bnRlclRhYkluamVjdGVkKSgpCiAgICBleHBlY3QoZmFjZS5hdmFpbGFibGUpLnRvQmUoZmFsc2Up
-          CiAgICBleHBlY3QoZmFjZS5kZXZlbG9wbWVudCkudG9CZShmYWxzZSkKICAgIGV4cGVjdChmYWNl
-          Lm11dGF0aW9uc0VuYWJsZWQpLnRvQmUoZmFsc2UpCiAgICBhd2FpdCBleHBlY3QoZmFjZS5saXN0
-          KHsgY2F0YWxvZ0tpbmQ6ICdwbHVnaW4nLCBzY29wZTogJ3B1YmxpYycsIHF1ZXJ5OiAnJywgbGlt
-          aXQ6IDI0IH0pKS5yZWplY3RzLnRvVGhyb3coJ3VuYXZhaWxhYmxlJykKICAgIHN0b3AoKQogICAg
-          ZXhwZWN0KGIuc2xvdHMuZW50cmllcygnbWFpbi5wYWdlJykpLnRvSGF2ZUxlbmd0aCgwKQogICAg
-          ZGVjbGFyZShiLnNsb3RzKQogICAgYXdhaXQgdmkud2FpdEZvcigoKSA9PiB7IGV4cGVjdChiLnNs
-          b3RzLmVudHJpZXMoJ21haW4ucGFnZScpKS50b0hhdmVMZW5ndGgoMSkgfSkKICAgIGIubG9jYWxl
-          LnNldExvY2FsZSgnZW4nKQogICAgYXdhaXQgZmliZXIuZGlzcG9zZSgpCiAgICBleHBlY3QoYi5z
-          bG90cy5lbnRyaWVzKCdtYWluLnBhZ2UnKSkudG9IYXZlTGVuZ3RoKDApCiAgICBleHBlY3QoYi5s
-          YXlvdXQuY2xvc2VQcmltYXJ5UGFnZSkudG9IYXZlQmVlbkNhbGxlZFdpdGgoJ3BsdWdpbi1jZW50
-          ZXInKQogICAgYXdhaXQgYi5jdHguZmliZXIuZGlzcG9zZSgpCiAgfSkKCiAgaXQoJ3VzZXMgdGhl
-          IGV4cGxpY2l0IFdlYiBkZXZlbG9wbWVudCBmaXh0dXJlJywgYXN5bmMgKCkgPT4gewogICAgT2Jq
-          ZWN0LmRlZmluZVByb3BlcnR5KHdpbmRvdywgJ19fRFNIX1BMVUdJTl9DRU5URVJfREVWX18nLCB7
-          CiAgICAgIGNvbmZpZ3VyYWJsZTogdHJ1ZSwKICAgICAgdmFsdWU6IHsgdmVyc2lvbjogMSB9LAog
-          ICAgfSkKICAgIGNvbnN0IGIgPSBhd2FpdCBiZW5jaChmYWxzZSkKICAgIGRlY2xhcmUoYi5zbG90
-          cykKICAgIGF3YWl0IGIuY3R4LnBsdWdpbih7IGluamVjdDogWy4uLmluamVjdF0sIGFwcGx5IH0p
-          LmF3YWl0KCkKICAgIGNvbnN0IHBsdWdpbkNlbnRlclBhZ2UgPSBiLnNsb3RzLmVudHJpZXMoJ21h
-          aW4ucGFnZScpWzBdIQogICAgY29uc3QgZmFjZSA9IChwbHVnaW5DZW50ZXJQYWdlLmluamVjdCBh
-          cyB1bmtub3duIGFzICgpID0+IFBsdWdpbkNlbnRlclRhYkluamVjdGVkKSgpCiAgICBleHBlY3Qo
-          ZmFjZS5hdmFpbGFibGUpLnRvQmUodHJ1ZSkKICAgIGV4cGVjdChmYWNlLmRldmVsb3BtZW50KS50
-          b0JlKHRydWUpCiAgICBleHBlY3QoZmFjZS5tdXRhdGlvbnNFbmFibGVkKS50b0JlKHRydWUpCiAg
-          ICBjb25zdCByZXN1bHQgPSBhd2FpdCBmYWNlLmxpc3QoeyBjYXRhbG9nS2luZDogJ3BsdWdpbics
-          IHNjb3BlOiAncHVibGljJywgcXVlcnk6ICcnLCBsaW1pdDogMjQgfSkKICAgIGV4cGVjdChyZXN1
-          bHQuc2VjdGlvbnMuZmVhdHVyZWRbMF0/LnBsdWdpbklkKS50b0JlKCdmaXh0dXJlLndvcmtzcGFj
-          ZS10b29scycpCiAgICBhd2FpdCBiLmN0eC5maWJlci5kaXNwb3NlKCkKICB9KQp9KQo=
-          B64
-          base64 -d /tmp/plugin-center-test.b64 > packages/client/ui-plugin-center/tests/apply.client.spec.ts
-          rm -f \
-            packages/client/ui-plugin-center/src/client/PluginDiscoveryNavItem.tsx \
-            packages/client/ui-plugin-center/src/client/PluginDiscoveryPage.tsx \
-            packages/client/ui-plugin-center/src/client/PluginDiscoveryPage.module.css \
-            packages/client/ui-plugin-center/tests/discovery.client.spec.tsx
-          if grep -n "plugin-discovery\|PluginDiscovery" packages/client/ui-plugin-center/src/client/index.ts; then
-            echo 'Plugin Discovery is still registered in the runtime entry' >&2
+          cat .scorpion/plugin-center-index.b64 | tr -d '\n\r' | base64 -d | gzip -d > packages/client/ui-plugin-center/src/client/index.ts
+          cat .scorpion/plugin-center-test.b64 | tr -d '\n\r' | base64 -d | gzip -d > packages/client/ui-plugin-center/tests/apply.client.spec.ts
+          if grep -nE 'PluginDiscovery|plugin-discovery' packages/client/ui-plugin-center/src/client/index.ts; then
+            echo 'Plugin Discovery is still registered' >&2
             exit 1
           fi
 
       - name: Apply conservative Windows performance and release hardening
         shell: bash
         run: |
-          python <<'PYCODE'
+          python <<'PY'
           from pathlib import Path
           import json, re
 
@@ -947,98 +70,86 @@ index 2ca9dcf..6ff56a9 100644
               p = Path(path)
               text = p.read_text(encoding='utf-8')
               if text.count(old) != 1:
-                  raise SystemExit(f'{path}: exact replacement mismatch: {old[:80]!r}')
+                  raise SystemExit(f'{path}: replacement mismatch: {old[:80]!r}')
               p.write_text(text.replace(old, new, 1), encoding='utf-8')
 
-          main = 'apps/desktop/src/main.ts'
-          one(main, "backgroundMaterial: 'acrylic' as const,", "backgroundMaterial: 'none' as const,\n      backgroundColor: '#07111d',")
-          one(main, "      sandbox: true,\n      webSecurity: true,", "      sandbox: true,\n      webSecurity: true,\n      backgroundThrottling: true,")
-
-          skin = 'packages/client/ui-desktop-customization/src/client/DesktopCustomization.module.css'
-          one(skin, '  background-attachment: fixed, fixed !important;', '  background-attachment: scroll, scroll !important;')
+          one('apps/desktop/src/main.ts',
+              "backgroundMaterial: 'acrylic' as const,",
+              "backgroundMaterial: 'none' as const,\n      backgroundColor: '#07111d',")
+          one('packages/client/ui-desktop-customization/src/client/DesktopCustomization.module.css',
+              '  background-attachment: fixed, fixed !important;',
+              '  background-attachment: scroll, scroll !important;')
 
           css = Path('packages/client/ui-plugin-center/src/client/PluginCenterTab.module.css')
           text = css.read_text(encoding='utf-8')
           text, count = re.subn(r'backdrop-filter:\s*blur\([^;]+\);', 'backdrop-filter: none;', text)
           if count == 0:
-              raise SystemExit('PluginCenterTab CSS had no live backdrop blur rule to optimize')
+              raise SystemExit('Plugin Center had no live backdrop blur rule to optimize')
           css.write_text(text, encoding='utf-8')
-          print(f'disabled {count} Plugin Center live blur rule(s)')
+          print(f'disabled {count} live Plugin Center blur rule(s)')
 
-          desktop_manifest = Path('apps/desktop/package.json')
-          desktop = json.loads(desktop_manifest.read_text(encoding='utf-8'))
+          desktop_path = Path('apps/desktop/package.json')
+          desktop = json.loads(desktop_path.read_text(encoding='utf-8'))
           desktop['version'] = '0.1.0-rc.6.1'
-          desktop['description'] = 'DeepSeek Harness desktop application with integrated Plugin Center, Scorpion branding, and performance-tuned Windows shell'
+          desktop['description'] = 'DeepSeek Harness desktop application with Scorpion branding, integrated Plugin Center, and performance-tuned Windows shell'
           desktop['build']['publish'] = [{'provider': 'github', 'owner': 'plutoczm', 'repo': 'deepseek-harness-vscode'}]
-          desktop_manifest.write_text(json.dumps(desktop, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          desktop_path.write_text(json.dumps(desktop, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
 
-          runtime_manifest = Path('apps/desktop/runtime/package.json')
-          runtime = json.loads(runtime_manifest.read_text(encoding='utf-8'))
+          runtime_path = Path('apps/desktop/runtime/package.json')
+          runtime = json.loads(runtime_path.read_text(encoding='utf-8'))
           runtime['dependencies']['dsh-remote'] = 'workspace:*'
-          runtime['dependencies'] = dict(sorted(runtime['dependencies'].items()))
-          runtime_manifest.write_text(json.dumps(runtime, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-
-          center_manifest = Path('packages/client/ui-plugin-center/package.json')
-          center = json.loads(center_manifest.read_text(encoding='utf-8'))
-          center['description'] = 'Desktop-only Plugin Center for browsing, installing, updating, and managing Harness plugins'
-          center['dsh']['client']['inject'] = [x for x in center['dsh']['client']['inject'] if x not in {
-              '@deepseek-ai/dsh-client-connection', '@deepseek-ai/dsh-client-ui-conversation'
-          }]
-          center_manifest.write_text(json.dumps(center, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          runtime_path.write_text(json.dumps(runtime, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
 
           workspace = Path('pnpm-workspace.yaml')
           w = workspace.read_text(encoding='utf-8')
-          marker = '  - vendor/*\n'
           if '  - third_party/*\n' not in w:
+              marker = '  - vendor/*\n'
               if w.count(marker) != 1:
-                  raise SystemExit('pnpm workspace vendor marker mismatch')
+                  raise SystemExit('pnpm workspace marker mismatch')
               w = w.replace(marker, marker + '  - third_party/*\n', 1)
           workspace.write_text(w, encoding='utf-8')
-          PYCODE
+          PY
 
-      - name: Install dependencies and update lockfile
+      - name: Install dependencies and refresh lockfile
         run: pnpm install --no-frozen-lockfile
 
-      - name: Verify vendored dsh-remote resolves from Desktop runtime
+      - name: Verify enhanced dsh-remote resolves from Desktop runtime
         shell: bash
         run: |
           set -euo pipefail
-          resolved="$(pnpm --dir apps/desktop/runtime exec node -p \"require.resolve('dsh-remote/package.json')\")"
-          echo "$resolved"
-          test -n "$resolved"
-          pnpm --dir apps/desktop/runtime exec node -e "const p=require('dsh-remote/package.json'); if(p.version!=='0.5.7') process.exit(1)"
+          pnpm --dir apps/desktop/runtime exec node -e "const p=require('dsh-remote/package.json'); console.log(require.resolve('dsh-remote/package.json')); if(p.version!=='0.5.7') process.exit(1)"
 
       - name: Typecheck
         run: pnpm run typecheck
 
-      - name: Plugin Center and Desktop tests
+      - name: Desktop and Plugin Center tests
         run: pnpm exec vitest run apps/desktop packages/client/ui-plugin-center
 
       - name: Production build
         run: pnpm run build
 
-      - name: Source assertions
+      - name: Final source assertions
         shell: bash
         run: |
           set -euo pipefail
           test -f third_party/dsh-remote/SCORPION.md
-          grep -q "forwardIn(remoteHost, requestedPort" third_party/dsh-remote/lib/index.js
-          grep -q "rw_proxy_tunnel" third_party/dsh-remote/lib/index.js
-          grep -q "SSH 反向代理" third_party/dsh-remote/lib/client.js
-          ! grep -q "PluginDiscovery" packages/client/ui-plugin-center/src/client/index.ts
-          ! grep -q "plugin-discovery" packages/client/ui-plugin-center/src/client/index.ts
+          grep -q 'forwardIn(remoteHost, requestedPort' third_party/dsh-remote/lib/index.js
+          grep -q 'rw_proxy_tunnel' third_party/dsh-remote/lib/index.js
+          grep -q 'SSH 反向代理' third_party/dsh-remote/lib/client.js
+          ! grep -qE 'PluginDiscovery|plugin-discovery' packages/client/ui-plugin-center/src/client/index.ts
           grep -q "backgroundMaterial: 'none'" apps/desktop/src/main.ts
           grep -q '"provider": "github"' apps/desktop/package.json
 
-      - name: Commit validated final source and remove one-shot workflow
+      - name: Commit validated source and remove temporary staging files
         shell: bash
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          rm -rf .scorpion
           git rm -f .github/workflows/optimize-desktop-once-v3.yml
           git add -A
           git diff --cached --check
           git status --short
-          git commit -m "feat: finalize Scorpion desktop and remote proxy workflow"
+          git commit -m 'feat: finalize Scorpion desktop and remote proxy workflow'
           git push origin HEAD:main
