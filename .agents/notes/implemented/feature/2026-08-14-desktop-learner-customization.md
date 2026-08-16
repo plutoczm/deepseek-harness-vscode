@@ -1,0 +1,45 @@
+# Agent Note: Desktop learner customization
+
+Status: implemented
+
+English | [中文](2026-08-14-desktop-learner-customization.zh.md)
+
+> The later [selectable visual providers decision](2026-08-16-selectable-visual-providers.md) supersedes only this note's Bailian-only provider, credential-reference, and endpoint decisions. All other decisions remain current.
+
+## Problem
+
+The Desktop shell started the complete Harness Host but offered no product-owned learner customization. A previously proven image-skin project could generate and install one fixed plugin, but learners still had to leave the application and repeat the packaging flow for every image. The source application also had no visible update lifecycle, team attribution, or way for its text-only DeepSeek Agents to understand images. These additions must preserve the renderer sandbox, keep credentials out of browser storage and session logs, avoid uploading background images, and avoid claiming that source development runs can install releases before signed platform artifacts exist.
+
+## Decision
+
+**One Desktop-only client plugin owns the visible learner surfaces.** `@deepseek-ai/dsh-client-ui-desktop-customization` is present in the Web bundle but its entries are disabled unless `DSH_DESKTOP=1`. It registers Background, Software update, and the full Bailian visual-enhancement control through the settings slots, an additive visual-enhancement shortcut through `conversation.input.left`, and the Beyondata attribution through `shell.overlay`. Ordinary `dsh web` deployments therefore keep their original composition.
+
+**A fresh Desktop renderer starts in Chinese.** The Electron marker selects the product's Chinese fallback before the client tree boots, independent of the operating-system browser language. A stored Host language preference still wins, so learners may switch to English and keep that choice; ordinary Web continues to follow the browser when no preference exists.
+
+**Bundled skins have stable identities; custom backgrounds stay local.** The first-run default is the bundled `whale-maid` skin, while the previous cat artwork remains available as `cloud-cat`. The persisted appearance document stores one built-in identifier or one custom image, never both; legacy documents without the identifier continue to resolve to the new default or their existing custom image. For custom backgrounds, the renderer accepts PNG, JPEG, or WebP up to 16 MB, cover-crops it to a 1920×1080 WebP, extracts four palette colors, and applies a reversible ThemeRuntime token layer. A fixed preload method sends only the processed data and numeric settings to the main process. The main process independently validates the identifier or WebP data URL, decoded size, ranges, and palette before atomically writing an owner-only `appearance.json` under Electron `userData`. Reset removes that document and returns to `whale-maid`.
+
+**The updater has a real main-process state machine and an honest development state.** `electron-updater` owns release checks, explicit downloads, progress, and restart installation. The preload exposes only get, check, download, install, and state subscription methods on fixed channels. Source runs never contact a provider and render `development`; packaged builds use electron-builder's generic HTTPS release metadata. Provider failures become stable, actionable Chinese messages while the technical error stays in the main-process log. The release command validates one channel and version, payload sizes, SHA-512 values, blockmaps, and the macOS ZIP before uploading immutable artifacts and replacing mutable channel metadata last. Platform installer targets, signing, notarization, Authenticode, and uploaded metadata remain release work rather than simulated development behavior.
+
+**External attribution stays outside the renderer navigation.** The supplied Logo is built into the Web frontend and rendered beside “赋范空间出品” in the frame overlay. Its HTTPS anchor is denied as an in-app window by the existing BrowserWindow policy and handed to the system browser.
+
+**Bailian augments every Agent without becoming its primary model.** The Host stores only the `DASHSCOPE_API_KEY` credential and exposes one loopback-only atomic enable operation. Concurrent enable requests are serialized: each request optionally stores its key, validates the selected image with that exact current credential through `qwen3.8-max`, and commits the setting only after success; ordinary settings RPCs can disable the feature but cannot enable it. The Settings row and composer shortcut share one browser status controller, refresh from Host settings, credential, and connection invalidations, and never maintain independent enabled values. Invalidations received while a mutation is saving are coalesced into one authoritative refresh after that mutation settles, so intermediate credential events cannot flash a stale disabled state. Clicking the disabled shortcut opens the same real-image verification dialog; clicking the enabled shortcut disables through the existing Settings namespace. Its hover card names the supported conversation and workspace image workflow without replacing the full configuration entry. While enabled, the Host mounts one `vision-enhancement` Skill, runtime context, and workspace-contained `vision_analyze` Tool into every live Agent scope and into future Agent scopes. Uploaded images remain in the Session surface; the exact Bailian text that replaces an image for the text-only DeepSeek request is appended as a required `vision/observation` event and reused on reconstruction. The Desktop bundle raises the shared attachment provider's per-image limit to the UI's stated 10 MB while ordinary Web keeps its 5 MB default.
+
+## Alternatives considered
+
+**Ship the generated `harness-image-skin` tarball unchanged.** Rejected because it embeds one image and requires plugin generation, installation, and Host restart for every change. It remains the verified mechanism source, not the learner interaction.
+
+**Expose filesystem paths or generic IPC to the browser.** Rejected because the loopback page does not need Node authority. The fixed bridge carries only validated appearance values and updater actions.
+
+**Store the custom image in browser storage.** Rejected because the Desktop Host binds an operating-system-assigned port on every launch, so origin-scoped browser persistence would not reliably survive restarts. Electron `userData` gives one stable private owner.
+
+**Persist the bundled Cloud Cat image as a custom data URL.** Rejected because it would duplicate a shipped asset into every user's private data, inflate `appearance.json`, and erase the skin's stable identity. A small discriminator keeps bundled and custom paths explicit.
+
+**Pretend update checks work in the source build.** Rejected because electron-updater verifies and installs platform artifacts, not a checkout. The visible development state preserves the complete UI without inventing an update result.
+
+**Use OpenRouter or switch the primary conversation model.** Rejected because learners already receive a DeepSeek Harness workflow and a Bailian credential. The visual provider stays a bounded image-analysis sidecar, so the existing DeepSeek route, Preset behavior, and text history remain intact.
+
+**Give the composer shortcut its own local toggle state.** Rejected because two independently optimistic controls could disagree after a failed write, credential replacement, or Host reconnect. Both entries instead project one Host-backed source and keep the Settings row as the complete configuration path.
+
+## Consequences
+
+Learners start with the Whale Maid skin, can switch to Cloud Cat, can choose and persist their own image without installing a plugin, and can restore the default. They can also see the future update path and reach the shared image-understanding workflow directly from the composer without losing its full Settings entry. The price is a narrow preload and IPC surface, a Desktop client package, one additional composer control, and paid Bailian calls for validation or image analysis. Packaged-runtime verification now requires both bundled 1920×1080 WebP assets. Processed custom backgrounds are bounded to 6 MB in the main process and stored as owner-only JSON; background originals never leave the renderer. Visual images are limited to PNG, JPEG, WebP, or GIF at 10 MB, sent only to the official Bailian endpoint after explicit enablement, and recorded without the credential. A keyless assembled-Web snapshot pins the first image turn and a Host restart: the persisted transcript contains the original image, one observation before the DeepSeek answer, and a resumed answer that reuses that observation without another Bailian request. The Beyondata feed is the only update authority for this customized application; it never follows upstream installers. An explicit same-version baseline may make already distributed test builds report `up-to-date`, but real cross-version installation remains gated on macOS DMG+ZIP, Windows NSIS, Linux AppImage, version metadata, and signing where required.

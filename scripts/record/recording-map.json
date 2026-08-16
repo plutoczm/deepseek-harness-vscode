@@ -1,0 +1,140 @@
+{
+  "project": "DeepSeek Harness Desktop",
+  "surface": {
+    "kind": "electron-desktop",
+    "resolution": {
+      "width": 1920,
+      "height": 1080
+    },
+    "fps": 30,
+    "codec": "h264",
+    "audio": false,
+    "subtitles": false
+  },
+  "onboarding": {
+    "stages": [
+      "first-adoption",
+      "ready"
+    ],
+    "skipPath": [],
+    "notes": "mypet 没有跳过按钮；预演通过真实 UI 完成首次领养，随后卸载并保留本地宠物档案，正式镜头不录首次引导。"
+  },
+  "routes": [
+    {
+      "path": "/?dsh-primary-page=plugin-center",
+      "title": "插件中心",
+      "purpose": "搜索、安装和管理公开插件",
+      "modes": [
+        {
+          "name": "公开目录",
+          "entry": "Desktop 内置插件中心"
+        },
+        {
+          "name": "已安装管理",
+          "entry": "button[aria-label=\"管理已安装插件\"]"
+        }
+      ],
+      "interactions": [
+        {
+          "name": "搜索 Pet",
+          "selector": "input[aria-label=\"搜索插件\"]",
+          "action": "type",
+          "feedback": "li[data-catalog-entry^=\"mypet@\"]",
+          "waitFor": "li[data-catalog-entry^=\"mypet@\"]",
+          "recordability": "ready"
+        },
+        {
+          "name": "安装 Pet",
+          "selector": "li[data-catalog-entry^=\"mypet@\"] button",
+          "action": "click",
+          "feedback": "真实安装事务与 Pet 悬浮层",
+          "waitFor": "[title=\"点击开/关 · 拖动移动\"]",
+          "recordability": "ready"
+        },
+        {
+          "name": "管理 Pet",
+          "selector": "button[aria-label^=\"管理已安装插件：\"]",
+          "action": "click",
+          "feedback": "已安装组合管理行",
+          "waitFor": "[data-action=\"disable\"], [data-action=\"enable\"]",
+          "recordability": "ready"
+        }
+      ],
+      "scrollPlan": []
+    }
+  ],
+  "features": [
+    {
+      "key": "F003-trusted-installation",
+      "name": "可信安装",
+      "entry": {
+        "clickPath": [
+          "input[aria-label=\"搜索插件\"]",
+          "li[data-catalog-entry^=\"mypet@\"]"
+        ]
+      },
+      "steps": [
+        "搜索确定包 mypet@1.0.7",
+        "确认版本与运行权限",
+        "执行真实安装并等待 Host 重连",
+        "验证 Pet 客户端悬浮层出现"
+      ],
+      "selectors": {
+        "search": "input[aria-label=\"搜索插件\"]",
+        "catalogCard": "li[data-catalog-entry^=\"mypet@\"]",
+        "dialog": "[role=\"dialog\"]",
+        "runtimeResult": "[title=\"点击开/关 · 拖动移动\"]",
+        "petPanel": ".dshpet-panel"
+      },
+      "waits": [
+        {
+          "after": "确认安装",
+          "selector": "[title=\"点击开/关 · 拖动移动\"]",
+          "timeout": 120000
+        }
+      ],
+      "scrolls": [],
+      "recordability": "ready",
+      "evidence": "Desktop 安装 RPC、事务进度、Host 重启与 mypet 客户端 slot 均为真实链路。"
+    },
+    {
+      "key": "F004-installed-composition-management",
+      "name": "已安装组合管理",
+      "entry": {
+        "clickPath": [
+          "button[aria-label=\"管理已安装插件\"]"
+        ]
+      },
+      "steps": [
+        "从已安装投影打开 mypet 管理",
+        "确认停用并等待 Pet 悬浮层消失",
+        "确认启用并等待 Pet 悬浮层恢复",
+        "打开 Pet 面板展示可用状态"
+      ],
+      "selectors": {
+        "manageInstalled": "button[aria-label=\"管理已安装插件\"]",
+        "disable": "[data-action=\"disable\"]",
+        "enable": "[data-action=\"enable\"]",
+        "runtimeResult": "[title=\"点击开/关 · 拖动移动\"]",
+        "petPanel": ".dshpet-panel"
+      },
+      "waits": [
+        {
+          "after": "停用",
+          "selector": "[title=\"点击开/关 · 拖动移动\"]",
+          "condition": "count becomes 0",
+          "timeout": 120000
+        },
+        {
+          "after": "启用",
+          "selector": "[title=\"点击开/关 · 拖动移动\"]",
+          "condition": "count becomes 1",
+          "timeout": 120000
+        }
+      ],
+      "scrolls": [],
+      "recordability": "ready",
+      "evidence": "启停走 Desktop 管理事务；运行节点消失与恢复提供直接可见证据。"
+    }
+  ]
+}

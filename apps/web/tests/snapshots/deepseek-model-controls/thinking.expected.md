@@ -1,0 +1,6 @@
+- menu "思考模式":
+  - menuitemradio "关闭思考 不启用深度思考"
+  - menuitemradio "深度思考 启用深度思考，适合大多数开发任务" [checked]:
+    - text: 深度思考 启用深度思考，适合大多数开发任务
+    - img
+  - menuitemradio "最大思考 使用最高推理强度，适合复杂任务"

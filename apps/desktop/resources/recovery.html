@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'none'; connect-src 'none'">
+  <title>DeepSeek Harness · 插件恢复</title>
+  <link rel="stylesheet" href="./recovery.css">
+</head>
+<body>
+  <main class="card" aria-labelledby="title">
+    <div class="mark" aria-hidden="true">↺</div>
+    <p class="eyebrow">DeepSeek Harness</p>
+    <h1 id="title">插件环境需要恢复</h1>
+    <p id="summary" class="summary">正在读取上一次插件操作的恢复状态…</p>
+    <dl class="details">
+      <div><dt>操作</dt><dd id="operation">—</dd></div>
+      <div><dt>恢复尝试</dt><dd id="attempt">—</dd></div>
+      <div><dt>失败原因</dt><dd id="reason">—</dd></div>
+    </dl>
+    <p id="notice" class="notice" role="status" aria-live="polite"></p>
+    <div class="actions">
+      <button id="retry" type="button" disabled>重新恢复旧环境</button>
+      <button id="export" class="secondary" type="button" disabled>导出诊断</button>
+    </div>
+    <p class="footnote">在旧 Host、客户端与 Skill 清单重新验证通过前，普通桌面功能不会启动。</p>
+  </main>
+  <script src="./recovery.js"></script>
+</body>
+</html>

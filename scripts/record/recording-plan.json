@@ -1,0 +1,76 @@
+{
+  "mode": "described-operation",
+  "confirmationMode": "standalone-staged",
+  "approval": {
+    "status": "approved",
+    "notes": "用户已确认 1080p、16:9、纯净录屏与 Pet 安装、运行、停用、启用的精确镜头顺序。",
+    "visualPolicy": "no-zoom",
+    "reviewPolicy": "staged"
+  },
+  "recordings": [
+    {
+      "key": "pet-plugin-lifecycle",
+      "kind": "operation",
+      "featureKeys": [
+        "F003-trusted-installation",
+        "F004-installed-composition-management"
+      ],
+      "order": 1,
+      "script": "scripts/record/scripts/feat-pet-lifecycle.json",
+      "expectedArtifact": "artifacts/recordings/<timestamp>-pet-plugin-lifecycle-raw.mp4",
+      "entry": {
+        "surface": "electron-desktop",
+        "page": "plugin-center",
+        "search": "mypet"
+      },
+      "sequence": [
+        "capture uninstalled runtime baseline",
+        "search mypet",
+        "confirm and run trusted install",
+        "prove Pet runtime appears",
+        "open Pet panel and pet once",
+        "disable and prove Pet disappears",
+        "enable and prove Pet returns",
+        "finish on running Pet panel"
+      ],
+      "operationEvidence": {
+        "mode": "live-result",
+        "evidenceKey": "pet-runtime-presence",
+        "resultDescription": "本轮真实安装和重新启用后，mypet 客户端运行节点出现；停用后该节点消失。",
+        "preflight": {
+          "status": "verified",
+          "notes": "已在真实 Electron Desktop 上完成 mypet@1.0.7 安装、首次领养、互动、停用、启用和卸载复位；所有事务均提交且运行节点按预期出现或消失。"
+        },
+        "sideEffects": {
+          "kind": "local-disposable",
+          "notes": "只修改本机 web Profile 和 mypet 浏览器数据；正式录制结束时保留 mypet 已安装且已启用。"
+        }
+      },
+      "setup": [
+        "确认预演后的 mypet 已真实卸载",
+        "关闭上一笔已提交事务的完成弹窗",
+        "清空搜索并保持插件中心首屏"
+      ],
+      "reset": [
+        "确认 mypet 不在已安装 Profile 中",
+        "确认 Pet 运行节点数量为 0",
+        "确认当前 Host origin 没有 Pet 运行节点"
+      ],
+      "finalState": "mypet@1.0.7 已安装、已启用、运行中；在当前 Host origin 完成领养并打开 Pet 面板。",
+      "zoom": {
+        "enabled": false,
+        "decision": "素版交给用户后再决定是否添加局部放大。"
+      }
+    }
+  ],
+  "excluded": [
+    {
+      "item": "mypet 卸载",
+      "reason": "本片按用户要求聚焦安装、运行、停用与启用，并保留可展示终态。"
+    },
+    {
+      "item": "其他插件",
+      "reason": "用户要求先只录 Pet 第一支验收效果。"
+    }
+  ]
+}

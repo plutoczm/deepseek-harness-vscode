@@ -1,0 +1,51 @@
+{
+  "name": "Pet 插件：安装、运行、停用与启用",
+  "surface": "electron-desktop",
+  "demonstration": {
+    "kind": "operation",
+    "mode": "live-result",
+    "evidenceKey": "pet-runtime-presence",
+    "resultDescription": "本轮真实安装和重新启用后，mypet 客户端运行节点出现；停用后该节点消失。"
+  },
+  "viewport": {
+    "width": 1920,
+    "height": 1080
+  },
+  "slowMo": 0,
+  "speedup": 1,
+  "zooms": [],
+  "steps": [
+    { "action": "waitFor", "selector": "input[aria-label=\"搜索插件\"]", "timeout": 30000 },
+    { "action": "captureState", "key": "pet-runtime-presence", "selector": "[title=\"点击开/关 · 拖动移动\"]", "read": "count" },
+    { "action": "moveTo", "selector": "input[aria-label=\"搜索插件\"]", "moveMs": 280 },
+    { "action": "type", "selector": "input[aria-label=\"搜索插件\"]", "text": "mypet", "speed": 55 },
+    { "action": "waitFor", "selector": "li:has(button[aria-label=\"查看详情：mypet\"])", "timeout": 30000 },
+    { "action": "moveTo", "selector": "li:has(button[aria-label=\"查看详情：mypet\"]) button:last-child", "moveMs": 280 },
+    { "action": "click", "selector": "li:has(button[aria-label=\"查看详情：mypet\"]) button:last-child" },
+    { "action": "click", "selector": "[role=\"dialog\"] input[type=\"checkbox\"]" },
+    { "action": "click", "text": "确认安装" },
+    { "action": "waitForStateChange", "key": "pet-runtime-presence", "timeout": 120000 },
+    { "action": "click", "text": "完成" },
+    { "action": "click", "text": "下一步 →" },
+    { "action": "click", "text": "🦊小狐狸" },
+    { "action": "click", "text": "💞抚摸" },
+    { "action": "click", "selector": ".dshpet-panel button[aria-label=\"关闭\"]" },
+    { "action": "click", "selector": "button[aria-label=\"管理已安装插件：mypet\"]" },
+    { "action": "captureState", "key": "pet-disable", "selector": "[title=\"点击开/关 · 拖动移动\"]", "read": "count" },
+    { "action": "click", "selector": "li[data-installed-plugin^=\"npm.mypet.\"] [data-action=\"disable\"]" },
+    { "action": "click", "selector": "[role=\"dialog\"] input[type=\"checkbox\"]" },
+    { "action": "click", "text": "停用" },
+    { "action": "waitForStateChange", "key": "pet-disable", "timeout": 120000 },
+    { "action": "click", "text": "完成" },
+    { "action": "click", "selector": "button[aria-label=\"管理已安装插件：mypet\"]" },
+    { "action": "captureState", "key": "pet-enable", "selector": "[title=\"点击开/关 · 拖动移动\"]", "read": "count" },
+    { "action": "click", "selector": "li[data-installed-plugin^=\"npm.mypet.\"] [data-action=\"enable\"]" },
+    { "action": "click", "selector": "[role=\"dialog\"] input[type=\"checkbox\"]" },
+    { "action": "click", "text": "启用" },
+    { "action": "waitForStateChange", "key": "pet-enable", "timeout": 120000 },
+    { "action": "click", "text": "完成" },
+    { "action": "click", "text": "下一步 →" },
+    { "action": "click", "text": "🦊小狐狸" },
+    { "action": "wait", "ms": 1200 }
+  ]
+}

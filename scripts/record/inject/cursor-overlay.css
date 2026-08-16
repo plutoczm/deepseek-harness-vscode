@@ -1,0 +1,40 @@
+/* 录制专用虚拟鼠标 · clean-recorder · 无字幕版本 */
+
+.__rec-cursor {
+  position: fixed;
+  pointer-events: none;
+  z-index: 2147483647;
+  left: 0; top: 0;
+  width: 28px; height: 36px;
+  opacity: 0;
+  transform: translate(-2px, -2px);
+  transition: opacity 200ms ease, transform 120ms ease;
+  will-change: left, top;
+}
+.__rec-cursor.is-visible { opacity: 1; }
+.__rec-cursor.is-pressed { transform: translate(-2px, -2px) scale(0.86); }
+.__rec-cursor svg {
+  width: 100%; height: 100%;
+  fill: #ffffff;
+  filter: drop-shadow(1px 2px 4px rgba(0, 0, 0, 0.55));
+}
+
+.__rec-ripple {
+  position: fixed;
+  pointer-events: none;
+  z-index: 2147483646;
+  left: 0; top: 0;
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%) scale(0.4);
+  opacity: 0;
+  background: rgba(255, 255, 255, 0.55);
+  border: 2px solid rgba(255, 255, 255, 0.95);
+}
+.__rec-ripple.is-firing {
+  animation: __rec-ripple-anim 460ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes __rec-ripple-anim {
+  0%   { opacity: 0.85; transform: translate(-50%, -50%) scale(0.5); }
+  100% { opacity: 0;    transform: translate(-50%, -50%) scale(2.6); }
+}

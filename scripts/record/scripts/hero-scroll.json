@@ -1,0 +1,28 @@
+{
+  "name": "烟雾测试 · hero 滚动",
+  "tag": "hero-scroll",
+  "baseUrl": "http://127.0.0.1:51964",
+  "viewport": {
+    "width": 1920,
+    "height": 1080
+  },
+  "speedup": 1,
+  "steps": [
+    {
+      "action": "navigate",
+      "url": "/",
+      "settleMs": 1500
+    },
+    {
+      "action": "wait",
+      "ms": 1000
+    },
+    {
+      "action": "scrollFull"
+    },
+    {
+      "action": "wait",
+      "ms": 1000
+    }
+  ]
+}

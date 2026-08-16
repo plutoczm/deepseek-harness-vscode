@@ -1,0 +1,37 @@
+diff --git a/out/codeSign/macCodeSign.js b/out/codeSign/macCodeSign.js
+index 3bde9755d703a70fc3a45c048c249559fef78d82..9db6a66ee59dbe28a167683b791d835766f279dd 100644
+--- a/out/codeSign/macCodeSign.js
++++ b/out/codeSign/macCodeSign.js
+@@ -155,16 +155,16 @@ async function createKeychain({ tmpDir, cscLink, cscKeyPassword, cscILink, cscI
+     if (cscIKeyPassword != null) {
+         cscPasswords.push(cscIKeyPassword);
+     }
+-    return await importCerts(keychainFile, certPaths, cscPasswords);
++    return await importCerts(keychainFile, certPaths, cscPasswords, keychainPassword);
+ }
+-async function importCerts(keychainFile, paths, keyPasswords) {
++async function importCerts(keychainFile, paths, keyPasswords, keychainPassword) {
+     var _a;
+     for (let i = 0; i < paths.length; i++) {
+         const password = (_a = keyPasswords[i]) !== null && _a !== void 0 ? _a : "";
+         await (0, builder_util_1.exec)("/usr/bin/security", ["import", paths[i], "-k", keychainFile, "-T", "/usr/bin/codesign", "-T", "/usr/bin/productbuild", "-P", password]);
+         // https://stackoverflow.com/questions/39868578/security-codesign-in-sierra-keychain-ignores-access-control-settings-and-ui-p
+         // https://github.com/electron-userland/electron-packager/issues/701#issuecomment-322315996
+-        await (0, builder_util_1.exec)("/usr/bin/security", ["set-key-partition-list", "-S", "apple-tool:,apple:", "-s", "-k", password, keychainFile]);
++        await (0, builder_util_1.exec)("/usr/bin/security", ["set-key-partition-list", "-S", "apple-tool:,apple:", "-s", "-k", keychainPassword, keychainFile]);
+     }
+     return {
+         keychainFile,
+diff --git a/out/targets/nsis/nsisUtil.js b/out/targets/nsis/nsisUtil.js
+index 52782461992b9bbb4b2104de4f00440cebe3d218..70928e5d453de3c85ac988cb4acf3f12e2c55fd8 100644
+--- a/out/targets/nsis/nsisUtil.js
++++ b/out/targets/nsis/nsisUtil.js
+@@ -7,7 +7,7 @@ const path = require("path");
+ const zlib = require("zlib");
+ const windows_1 = require("../../toolsets/windows");
+ const pathManager_1 = require("../../util/pathManager");
+-exports.nsisTemplatesDir = (0, pathManager_1.getTemplatePath)("nsis");
++exports.nsisTemplatesDir = process.env.ELECTRON_BUILDER_NSIS_TEMPLATE_DIR || (0, pathManager_1.getTemplatePath)("nsis");
+ class AppPackageHelper {
+     constructor(elevateHelper) {
+         this.elevateHelper = elevateHelper;

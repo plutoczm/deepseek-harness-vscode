@@ -1,0 +1,3 @@
+- insert:
+    - id: fixture.workspace-tools
+      name: '@deepseek-ai/dsh-plugin-center-fixture'

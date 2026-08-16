@@ -1,0 +1,56 @@
+{
+  "extends": "../../../tsconfig.base.client.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib/types",
+    "tsBuildInfoFile": "lib/tsconfig.client.tsbuildinfo"
+  },
+  "files": [
+    "src/client/PluginCenterNavItem.tsx",
+    "src/client/PluginDiscoveryNavItem.tsx",
+    "src/client/PluginDiscoveryPage.tsx",
+    "src/client/PluginCenterTab.tsx",
+    "src/client/InstalledPluginsPanel.tsx",
+    "src/client/PluginDetailPage.tsx",
+    "src/client/PluginInstallDialogs.tsx",
+    "src/client/bridge.ts",
+    "src/client/compatibility-copy.ts",
+    "src/client/development-bridge.ts",
+    "src/client/index.ts",
+    "src/client/locales.ts",
+    "src/client/operation-phases.ts",
+    "src/css-modules.d.ts"
+  ],
+  "references": [
+    {
+      "path": "../../../vendor/cordis"
+    },
+    {
+      "path": "../../plugin-center/contracts"
+    },
+    {
+      "path": "../locale"
+    },
+    {
+      "path": "../runtime"
+    },
+    {
+      "path": "../ui-layout"
+    },
+    {
+      "path": "../ui-conversation"
+    },
+    {
+      "path": "../ui-sidebar"
+    },
+    {
+      "path": "../ui-settings"
+    },
+    {
+      "path": "../ui-primitives"
+    },
+    {
+      "path": "../ui-slots"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+- menu "DeepSeek 模型设置":
+  - menuitem "模型 DeepSeek-V4-Flash":
+    - text: 模型 DeepSeek-V4-Flash
+    - img
+  - menuitem "思考模式 深度思考":
+    - text: 思考模式 深度思考
+    - img
