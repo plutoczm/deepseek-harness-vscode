@@ -7,7 +7,11 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
 function run(command: string, args: readonly string[], env: NodeJS.ProcessEnv): void {
-  const result = spawnSync(command, args, { env, stdio: 'inherit' })
+  // Maintained Node releases do not resolve Windows command shims (for example
+  // pnpm.cmd) through direct spawn. Route the repository-owned pnpm invocation
+  // through cmd.exe on Windows, matching the runtime staging path.
+  const shell = process.platform === 'win32' && command.toLowerCase().endsWith('.cmd')
+  const result = spawnSync(command, args, { env, stdio: 'inherit', shell })
   if (result.error !== undefined) throw result.error
   if (result.status !== 0) throw new Error(`${command} ${args.join(' ')} exited with ${String(result.status)}`)
 }
@@ -32,7 +36,9 @@ export function releaseWin(extraArgs: readonly string[] = []): void {
       symlinkSync(templateSource, shortTemplates, 'dir')
       environment.ELECTRON_BUILDER_NSIS_TEMPLATE_DIR = shortTemplates
     }
-    run('pnpm', ['exec', 'electron-builder', '--win', 'nsis', '--x64', ...extraArgs], environment)
+    run(process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', [
+      'exec', 'electron-builder', '--win', 'nsis', '--x64', '--publish', 'never', ...extraArgs,
+    ], environment)
   } finally {
     if (temporaryRoot !== undefined) rmSync(temporaryRoot, { recursive: true, force: true })
   }
