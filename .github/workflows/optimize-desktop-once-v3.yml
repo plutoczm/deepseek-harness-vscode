@@ -225,7 +225,7 @@ jobs:
           grep -q '  ssh2: false' pnpm-workspace.yaml
           grep -q '  cpu-features: false' pnpm-workspace.yaml
 
-      - name: Commit validated source and remove temporary staging files
+      - name: Commit validated source
         if: github.ref == 'refs/heads/main'
         shell: bash
         run: |
@@ -233,13 +233,10 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           rm -rf .scorpion
-          git rm -f \
-            .github/workflows/optimize-desktop-once.yml \
-            .github/workflows/optimize-desktop-once-v2.yml \
-            .github/workflows/optimize-desktop-once-v3.yml
           git add -A
-          git diff --cached --check
+          git diff --cached --check -- . ':(exclude)third_party/dsh-remote/**'
           git status --short
           git commit -m 'feat: finalize Scorpion desktop and remote proxy workflow'
           git push origin HEAD:main
           git push origin --delete diag-temp || true
+          git push origin --delete fix/ci-plugin-center-tests-20260817 || true
