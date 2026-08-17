@@ -44,3 +44,8 @@ worktrees/
 .typert-*/
 /docs/
 /DEVELOPER-HANDOFF/
+
+# The vendored dsh-remote package ships executable JS in lib/. Keep it tracked
+# even though workspace build outputs named lib/ are ignored elsewhere.
+!/third_party/dsh-remote/lib/
+!/third_party/dsh-remote/lib/**
