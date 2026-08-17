@@ -1,4 +1,4 @@
-name: Persist Vendored dsh-remote Runtime Once
+name: Finalize Performance and Build Windows Once
 
 on:
   push:
@@ -10,13 +10,14 @@ permissions:
   contents: write
 
 jobs:
-  persist-runtime:
+  validate-and-persist:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v5
         with:
+          ref: main
           fetch-depth: 0
 
       - name: Setup Node
@@ -25,49 +26,172 @@ jobs:
           node-version: '24'
           package-manager-cache: false
 
-      - name: Restore validated enhanced runtime files
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -rf .dsh-remote-stage
-          mkdir -p .dsh-remote-stage
-          curl --fail --location --retry 3 \
-            'https://github.com/flymysql/dsh-remote/archive/bd56bcd6435aec08e6ac583c21d39bb9e81f1022.tar.gz' \
-            | tar -xz --strip-components=1 -C .dsh-remote-stage
-          {
-            git show 543b325c345eba9142972c528d83e8af22e6fa88:.scorpion/proxy.001.b64
-            git show 543b325c345eba9142972c528d83e8af22e6fa88:.scorpion/proxy.002.b64
-          } | tr -d '\n\r' | base64 -d | gzip -d > /tmp/dsh-remote.patch
-          git apply --check --directory=.dsh-remote-stage /tmp/dsh-remote.patch
-          git apply --directory=.dsh-remote-stage /tmp/dsh-remote.patch
-          rm -rf third_party/dsh-remote/lib
-          cp -a .dsh-remote-stage/lib third_party/dsh-remote/lib
-          rm -rf .dsh-remote-stage
-          test -f third_party/dsh-remote/lib/index.js
-          test -f third_party/dsh-remote/lib/client.js
-          grep -Fq 'forwardIn(remoteHost, requestedPort' third_party/dsh-remote/lib/index.js
-          grep -Fq 'rw_proxy_tunnel' third_party/dsh-remote/lib/index.js
-          grep -Fq 'SSH 反向代理' third_party/dsh-remote/lib/client.js
-          node --check third_party/dsh-remote/lib/index.js
-          node --check third_party/dsh-remote/lib/client.js
-
-      - name: Verify fresh workspace resolution
+      - name: Enable pnpm
         shell: bash
         run: |
           set -euo pipefail
           corepack enable
           corepack prepare pnpm@11.7.0 --activate
-          pnpm install --frozen-lockfile
-          pnpm --dir apps/desktop/runtime exec node -e "const p=require('dsh-remote/package.json'); if(p.version!=='0.5.7') process.exit(1); console.log(require.resolve('dsh-remote'));"
+          node --version
+          pnpm --version
 
-      - name: Commit vendored runtime files
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply final performance hardening
+        shell: bash
+        run: |
+          set -euo pipefail
+          python <<'PY'
+          from pathlib import Path
+
+          def one(path: str, old: str, new: str) -> None:
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected one replacement, found {count}: {old[:100]!r}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          tab = 'packages/client/ui-plugin-center/src/client/PluginCenterTab.tsx'
+          one(
+              tab,
+              "  const observedTerminal = useRef<string | null>(null)\n  const [kind, setKind] = useState<CatalogKind>('plugin')",
+              "  const observedTerminal = useRef<string | null>(null)\n  const listCache = useRef(new Map<string, CatalogListResult>())\n  const [kind, setKind] = useState<CatalogKind>('plugin')",
+          )
+          one(
+              tab,
+              "  const [query, setQuery] = useState('')\n  const [revision, setRevision] = useState(0)",
+              "  const [query, setQuery] = useState('')\n  const [debouncedQuery, setDebouncedQuery] = useState('')\n  const [revision, setRevision] = useState(0)",
+          )
+          one(
+              tab,
+              "  const criteria = useMemo<CatalogListQuery>(() => ({\n    catalogKind: kind,\n    scope,\n    query: query.trim(),\n    limit: 24,\n  }), [kind, query, scope])",
+              "  useEffect(() => {\n    const timer = setTimeout(() => { setDebouncedQuery(query) }, 220)\n    return () => { clearTimeout(timer) }\n  }, [query])\n\n  const criteria = useMemo<CatalogListQuery>(() => ({\n    catalogKind: kind,\n    scope,\n    query: debouncedQuery.trim(),\n    limit: 24,\n  }), [debouncedQuery, kind, scope])",
+          )
+          one(
+              tab,
+              "    let current = true\n    void Promise.resolve().then(() => list(criteria)).then(\n      (result) => {\n        if (current) setView({ status: 'ready', result })",
+              "    let current = true\n    const cacheKey = `${criteria.catalogKind}:${criteria.scope}:${criteria.query}:${criteria.limit}`\n    const cached = listCache.current.get(cacheKey)\n    if (cached !== undefined && cached.freshness !== 'stale') {\n      setView({ status: 'ready', result: cached })\n    }\n    void Promise.resolve().then(() => list(criteria)).then(\n      (result) => {\n        if (result.freshness !== 'stale') listCache.current.set(cacheKey, result)\n        if (current) setView({ status: 'ready', result })",
+          )
+          one(
+              tab,
+              '          loading="lazy"\n          referrerPolicy="no-referrer"',
+              '          loading="lazy"\n          decoding="async"\n          referrerPolicy="no-referrer"',
+          )
+
+          plugin_css = Path('packages/client/ui-plugin-center/src/client/PluginCenterTab.module.css')
+          text = plugin_css.read_text(encoding='utf-8')
+          marker = '/* Scorpion performance: skip off-screen catalog-card paint/layout until needed. */'
+          if marker not in text:
+              text += (\n                  '\n' + marker + '\n'\n                  '.card {\n'\n                  '  content-visibility: auto;\n'\n                  '  contain-intrinsic-size: auto 88px;\n'\n                  '}\n'\n              )
+              plugin_css.write_text(text, encoding='utf-8')
+
+          chat_css = 'packages/client/ui-conversation/src/client/chat/ChatView.module.css'
+          one(
+              chat_css,
+              ".flowItem {\n  min-width: 0;\n}",
+              ".flowItem {\n  min-width: 0;\n  content-visibility: auto;\n  contain-intrinsic-size: auto 160px;\n}",
+          )
+          PY
+
+      - name: Performance source assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'setDebouncedQuery(query) }, 220' packages/client/ui-plugin-center/src/client/PluginCenterTab.tsx
+          grep -Fq 'const listCache = useRef(new Map<string, CatalogListResult>())' packages/client/ui-plugin-center/src/client/PluginCenterTab.tsx
+          grep -Fq 'cached.freshness' packages/client/ui-plugin-center/src/client/PluginCenterTab.tsx
+          grep -Fq 'decoding="async"' packages/client/ui-plugin-center/src/client/PluginCenterTab.tsx
+          grep -Fq 'content-visibility: auto' packages/client/ui-plugin-center/src/client/PluginCenterTab.module.css
+          grep -Fq 'content-visibility: auto' packages/client/ui-conversation/src/client/chat/ChatView.module.css
+          ! git grep -n 'backdrop-filter'
+          ! git grep -n '赋范空间出品'
+          ! git grep -nE 'PluginDiscovery|plugin-discovery' -- packages/client/ui-plugin-center/src/client packages/client/ui-plugin-center/tsconfig.client.json
+          test -f third_party/dsh-remote/lib/index.js
+          test -f third_party/dsh-remote/lib/client.js
+          grep -Fq 'forwardIn(remoteHost, requestedPort' third_party/dsh-remote/lib/index.js
+          grep -Fq 'rw_proxy_tunnel' third_party/dsh-remote/lib/index.js
+          grep -Fq 'SSH 反向代理' third_party/dsh-remote/lib/client.js
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Production build
+        run: pnpm run build
+
+      - name: Affected tests
+        run: pnpm exec vitest run apps/desktop packages/client/ui-plugin-center packages/client/ui-conversation
+
+      - name: Persist validated performance source
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -f third_party/dsh-remote/lib
+          git add \
+            packages/client/ui-plugin-center/src/client/PluginCenterTab.tsx \
+            packages/client/ui-plugin-center/src/client/PluginCenterTab.module.css \
+            packages/client/ui-conversation/src/client/chat/ChatView.module.css
+          git diff --cached --check -- \
+            packages/client/ui-plugin-center/src/client/PluginCenterTab.tsx \
+            packages/client/ui-plugin-center/src/client/PluginCenterTab.module.css \
+            packages/client/ui-conversation/src/client/chat/ChatView.module.css
           git status --short
-          git diff --cached --quiet && { echo 'No runtime files to persist'; exit 1; }
-          git commit -m 'fix: persist enhanced dsh-remote runtime files'
+          git diff --cached --quiet && { echo 'No performance source changes to persist'; exit 1; }
+          git commit -m 'perf: harden plugin center and long-session rendering'
           git push origin HEAD:main
+
+  windows-installer:
+    needs: validate-and-persist
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout validated main
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Enable pnpm
+        shell: pwsh
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.7.0 --activate
+          node --version
+          pnpm --version
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build final Windows Setup.exe
+        run: pnpm run dist:win:desktop
+
+      - name: Collect installer and checksum
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          $installer = Get-ChildItem -Path apps/desktop -Recurse -File -Filter '*Setup.exe' |
+            Sort-Object LastWriteTimeUtc -Descending |
+            Select-Object -First 1
+          if (-not $installer) { throw 'Windows Setup.exe was not produced' }
+          Copy-Item $installer.FullName -Destination artifacts/
+          $copied = Get-ChildItem artifacts -File -Filter '*.exe' | Select-Object -First 1
+          $hash = Get-FileHash $copied.FullName -Algorithm SHA256
+          "$($hash.Hash)  $($copied.Name)" | Set-Content -Encoding ascii artifacts/SHA256SUMS.txt
+          Get-ChildItem artifacts | Format-Table Name, Length
+          Get-Content artifacts/SHA256SUMS.txt
+
+      - name: Upload final Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: scorpion-windows-setup-final
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 30
