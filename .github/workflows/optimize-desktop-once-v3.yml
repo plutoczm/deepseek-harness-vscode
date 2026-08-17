@@ -179,22 +179,8 @@ jobs:
           pnpm --dir apps/desktop/runtime exec node -e "const p=require('dsh-remote/package.json'); console.log(require.resolve('dsh-remote/package.json')); if(p.version!=='0.5.7'||!p.files.includes('SCORPION.md')) process.exit(1)"
 
       - name: Typecheck
-        id: typecheck
         shell: bash
-        run: |
-          set +e
-          pnpm run typecheck > typecheck-errors.txt 2>&1
-          code=$?
-          cat typecheck-errors.txt
-          exit $code
-
-      - name: Upload typecheck diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: finalizer-typecheck-errors
-          path: typecheck-errors.txt
-          retention-days: 1
+        run: pnpm run typecheck
 
       - name: Production build
         run: pnpm run build
@@ -214,9 +200,7 @@ jobs:
           ! test -e packages/client/ui-plugin-center/src/client/PluginDiscoveryPage.tsx
           ! test -e packages/client/ui-plugin-center/src/client/PluginDiscoveryNavItem.tsx
           ! test -e packages/client/ui-plugin-center/tests/discovery.client.spec.tsx
-          ! grep -R -qE 'PluginDiscovery|plugin-discovery' \
-            packages/client/ui-plugin-center/src/client/index.ts \
-            packages/client/ui-plugin-center/tsconfig.client.json
+          ! grep -R -qE 'PluginDiscovery|plugin-discovery' packages/client/ui-plugin-center/src/client/index.ts packages/client/ui-plugin-center/tsconfig.client.json
           ! grep -q "backgroundMaterial: 'acrylic'" apps/desktop/src/main.ts
           grep -q "backgroundColor: '#07111d'" apps/desktop/src/main.ts
           grep -q '"provider": "github"' apps/desktop/package.json
@@ -225,6 +209,16 @@ jobs:
           grep -q '  ssh2: false' pnpm-workspace.yaml
           grep -q '  cpu-features: false' pnpm-workspace.yaml
 
+      - name: Stage validated source
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .scorpion
+          git add -A
+          git status --short
+          test -n "$(git status --porcelain)"
+
       - name: Commit validated source
         if: github.ref == 'refs/heads/main'
         shell: bash
@@ -232,11 +226,18 @@ jobs:
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          rm -rf .scorpion
-          git add -A
-          git diff --cached --check -- . ':(exclude)third_party/dsh-remote/**'
-          git status --short
           git commit -m 'feat: finalize Scorpion desktop and remote proxy workflow'
+
+      - name: Push validated source
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euo pipefail
           git push origin HEAD:main
+
+      - name: Remove temporary branches
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
           git push origin --delete diag-temp || true
           git push origin --delete fix/ci-plugin-center-tests-20260817 || true
