@@ -1,4 +1,4 @@
-name: Finalize Performance and Build Windows Once
+name: Verify Final Source and Build Windows Once
 
 on:
   push:
@@ -7,14 +7,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  validate-and-persist:
+  validate:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - name: Checkout
+      - name: Checkout final main
         uses: actions/checkout@v5
         with:
           ref: main
@@ -38,64 +38,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Apply final performance hardening
-        shell: bash
-        run: |
-          set -euo pipefail
-          python <<'PY'
-          from pathlib import Path
-
-          def one(path: str, old: str, new: str) -> None:
-              p = Path(path)
-              text = p.read_text(encoding='utf-8')
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f'{path}: expected one replacement, found {count}: {old[:100]!r}')
-              p.write_text(text.replace(old, new, 1), encoding='utf-8')
-
-          tab = 'packages/client/ui-plugin-center/src/client/PluginCenterTab.tsx'
-          one(
-              tab,
-              "  const observedTerminal = useRef<string | null>(null)\n  const [kind, setKind] = useState<CatalogKind>('plugin')",
-              "  const observedTerminal = useRef<string | null>(null)\n  const listCache = useRef(new Map<string, CatalogListResult>())\n  const [kind, setKind] = useState<CatalogKind>('plugin')",
-          )
-          one(
-              tab,
-              "  const [query, setQuery] = useState('')\n  const [revision, setRevision] = useState(0)",
-              "  const [query, setQuery] = useState('')\n  const [debouncedQuery, setDebouncedQuery] = useState('')\n  const [revision, setRevision] = useState(0)",
-          )
-          one(
-              tab,
-              "  const criteria = useMemo<CatalogListQuery>(() => ({\n    catalogKind: kind,\n    scope,\n    query: query.trim(),\n    limit: 24,\n  }), [kind, query, scope])",
-              "  useEffect(() => {\n    const timer = setTimeout(() => { setDebouncedQuery(query) }, 220)\n    return () => { clearTimeout(timer) }\n  }, [query])\n\n  const criteria = useMemo<CatalogListQuery>(() => ({\n    catalogKind: kind,\n    scope,\n    query: debouncedQuery.trim(),\n    limit: 24,\n  }), [debouncedQuery, kind, scope])",
-          )
-          one(
-              tab,
-              "    let current = true\n    void Promise.resolve().then(() => list(criteria)).then(\n      (result) => {\n        if (current) setView({ status: 'ready', result })",
-              "    let current = true\n    const cacheKey = `${criteria.catalogKind}:${criteria.scope}:${criteria.query}:${criteria.limit}`\n    const cached = listCache.current.get(cacheKey)\n    if (cached !== undefined && cached.freshness !== 'stale') {\n      setView({ status: 'ready', result: cached })\n    }\n    void Promise.resolve().then(() => list(criteria)).then(\n      (result) => {\n        if (result.freshness !== 'stale') listCache.current.set(cacheKey, result)\n        if (current) setView({ status: 'ready', result })",
-          )
-          one(
-              tab,
-              '          loading="lazy"\n          referrerPolicy="no-referrer"',
-              '          loading="lazy"\n          decoding="async"\n          referrerPolicy="no-referrer"',
-          )
-
-          plugin_css = Path('packages/client/ui-plugin-center/src/client/PluginCenterTab.module.css')
-          text = plugin_css.read_text(encoding='utf-8')
-          marker = '/* Scorpion performance: skip off-screen catalog-card paint/layout until needed. */'
-          if marker not in text:
-              text += '\n' + marker + '\n.card {\n  content-visibility: auto;\n  contain-intrinsic-size: auto 88px;\n}\n'
-              plugin_css.write_text(text, encoding='utf-8')
-
-          chat_css = 'packages/client/ui-conversation/src/client/chat/ChatView.module.css'
-          one(
-              chat_css,
-              ".flowItem {\n  min-width: 0;\n}",
-              ".flowItem {\n  min-width: 0;\n  content-visibility: auto;\n  contain-intrinsic-size: auto 160px;\n}",
-          )
-          PY
-
-      - name: Performance source assertions
+      - name: Final source assertions
         shell: bash
         run: |
           set -euo pipefail
@@ -113,6 +56,16 @@ jobs:
           grep -Fq 'forwardIn(remoteHost, requestedPort' third_party/dsh-remote/lib/index.js
           grep -Fq 'rw_proxy_tunnel' third_party/dsh-remote/lib/index.js
           grep -Fq 'SSH 反向代理' third_party/dsh-remote/lib/client.js
+          grep -Fq '"dsh-remote": "workspace:*"' apps/desktop/runtime/package.json
+          grep -Fq '"provider": "github"' apps/desktop/package.json
+          grep -Fq '"owner": "plutoczm"' apps/desktop/package.json
+          grep -Fq '"repo": "deepseek-harness-vscode"' apps/desktop/package.json
+          grep -Fq "backgroundColor: '#07111d'" apps/desktop/src/main.ts
+          grep -Fq 'scripts/stage-runtime-win.ts' apps/desktop/package.json
+          ! grep -Fq 'DSH_DESKTOP_TARGET_PLATFORM=win32 ' apps/desktop/package.json
+          grep -Fq "process.env.DSH_DESKTOP_TARGET_PLATFORM = 'win32'" apps/desktop/scripts/stage-runtime-win.ts
+          grep -Fq "process.env.DSH_DESKTOP_TARGET_ARCH = 'x64'" apps/desktop/scripts/stage-runtime-win.ts
+          grep -Fq "await import('./stage-runtime.ts')" apps/desktop/scripts/stage-runtime-win.ts
 
       - name: Typecheck
         run: pnpm run typecheck
@@ -123,31 +76,12 @@ jobs:
       - name: Affected tests
         run: pnpm exec vitest run apps/desktop packages/client/ui-plugin-center packages/client/ui-conversation
 
-      - name: Persist validated performance source
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add \
-            packages/client/ui-plugin-center/src/client/PluginCenterTab.tsx \
-            packages/client/ui-plugin-center/src/client/PluginCenterTab.module.css \
-            packages/client/ui-conversation/src/client/chat/ChatView.module.css
-          git diff --cached --check -- \
-            packages/client/ui-plugin-center/src/client/PluginCenterTab.tsx \
-            packages/client/ui-plugin-center/src/client/PluginCenterTab.module.css \
-            packages/client/ui-conversation/src/client/chat/ChatView.module.css
-          git status --short
-          git diff --cached --quiet && { echo 'No performance source changes to persist'; exit 1; }
-          git commit -m 'perf: harden plugin center and long-session rendering'
-          git push origin HEAD:main
-
   windows-installer:
-    needs: validate-and-persist
+    needs: validate
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
-      - name: Checkout validated main
+      - name: Checkout final main
         uses: actions/checkout@v5
         with:
           ref: main
@@ -170,8 +104,22 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build final Windows Setup.exe
-        run: pnpm run dist:win:desktop
+      - name: Build workspace on Windows
+        run: pnpm run build
+
+      - name: Stage Windows x64 runtime
+        run: node --import tsx apps/desktop/scripts/stage-runtime-win.ts
+
+      - name: Build final NSIS Setup.exe
+        shell: pwsh
+        run: |
+          Push-Location apps/desktop
+          try {
+            node --import tsx scripts/release-win.ts
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            Pop-Location
+          }
 
       - name: Collect installer and checksum
         shell: pwsh
