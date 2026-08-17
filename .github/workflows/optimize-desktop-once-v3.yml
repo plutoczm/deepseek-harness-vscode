@@ -1,4 +1,4 @@
-name: Finalize Scorpion Desktop Once
+name: Persist Vendored dsh-remote Runtime Once
 
 on:
   push:
@@ -10,9 +10,9 @@ permissions:
   contents: write
 
 jobs:
-  finalize:
+  persist-runtime:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -25,219 +25,49 @@ jobs:
           node-version: '24'
           package-manager-cache: false
 
-      - name: Enable pnpm
-        run: |
-          corepack enable
-          corepack prepare pnpm@11.7.0 --activate
-          node --version
-          pnpm --version
-
-      - name: Vendor and enhance marketplace dsh-remote 0.5.7
+      - name: Restore validated enhanced runtime files
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf third_party/dsh-remote
-          mkdir -p third_party/dsh-remote
+          rm -rf .dsh-remote-stage
+          mkdir -p .dsh-remote-stage
           curl --fail --location --retry 3 \
             'https://github.com/flymysql/dsh-remote/archive/bd56bcd6435aec08e6ac583c21d39bb9e81f1022.tar.gz' \
-            | tar -xz --strip-components=1 -C third_party/dsh-remote
-          cat .scorpion/proxy.*.b64 | tr -d '\n\r' | base64 -d | gzip -d > /tmp/dsh-remote.patch
-          git apply --check --directory=third_party/dsh-remote /tmp/dsh-remote.patch
-          git apply --directory=third_party/dsh-remote /tmp/dsh-remote.patch
-          test -f third_party/dsh-remote/SCORPION.md
+            | tar -xz --strip-components=1 -C .dsh-remote-stage
+          {
+            git show 543b325c345eba9142972c528d83e8af22e6fa88:.scorpion/proxy.001.b64
+            git show 543b325c345eba9142972c528d83e8af22e6fa88:.scorpion/proxy.002.b64
+          } | tr -d '\n\r' | base64 -d | gzip -d > /tmp/dsh-remote.patch
+          git apply --check --directory=.dsh-remote-stage /tmp/dsh-remote.patch
+          git apply --directory=.dsh-remote-stage /tmp/dsh-remote.patch
+          rm -rf third_party/dsh-remote/lib
+          cp -a .dsh-remote-stage/lib third_party/dsh-remote/lib
+          rm -rf .dsh-remote-stage
+          test -f third_party/dsh-remote/lib/index.js
+          test -f third_party/dsh-remote/lib/client.js
           grep -Fq 'forwardIn(remoteHost, requestedPort' third_party/dsh-remote/lib/index.js
           grep -Fq 'rw_proxy_tunnel' third_party/dsh-remote/lib/index.js
           grep -Fq 'SSH 反向代理' third_party/dsh-remote/lib/client.js
           node --check third_party/dsh-remote/lib/index.js
           node --check third_party/dsh-remote/lib/client.js
-          node -e "const p=require('./third_party/dsh-remote/package.json'); if(p.name!=='dsh-remote'||p.version!=='0.5.7'||p.license!=='MIT') process.exit(1)"
 
-      - name: Keep Plugin Center as the only marketplace entry
+      - name: Verify fresh workspace resolution
         shell: bash
         run: |
           set -euo pipefail
-          cat .scorpion/plugin-center-index.b64 | tr -d '\n\r' | base64 -d | gzip -d > packages/client/ui-plugin-center/src/client/index.ts
-          cat .scorpion/plugin-center-test.b64 | tr -d '\n\r' | base64 -d | gzip -d > packages/client/ui-plugin-center/tests/apply.client.spec.ts
-          rm -f \
-            packages/client/ui-plugin-center/src/client/PluginDiscoveryNavItem.tsx \
-            packages/client/ui-plugin-center/src/client/PluginDiscoveryPage.tsx \
-            packages/client/ui-plugin-center/src/client/PluginDiscoveryPage.module.css \
-            packages/client/ui-plugin-center/tests/discovery.client.spec.tsx
-          sed -i \
-            -e '/src\/client\/PluginDiscoveryNavItem\.tsx/d' \
-            -e '/src\/client\/PluginDiscoveryPage\.tsx/d' \
-            packages/client/ui-plugin-center/tsconfig.client.json
-          if grep -R -nE 'PluginDiscovery|plugin-discovery' \
-            packages/client/ui-plugin-center/src/client/index.ts \
-            packages/client/ui-plugin-center/tsconfig.client.json; then
-            echo 'Plugin Discovery is still registered in the client project' >&2
-            exit 1
-          fi
+          corepack enable
+          corepack prepare pnpm@11.7.0 --activate
+          pnpm install --frozen-lockfile
+          pnpm --dir apps/desktop/runtime exec node -e "const p=require('dsh-remote/package.json'); if(p.version!=='0.5.7') process.exit(1); console.log(require.resolve('dsh-remote'));"
 
-      - name: Apply conservative Windows performance and release hardening
-        shell: bash
-        run: |
-          python <<'PY'
-          from pathlib import Path
-          import json
-
-          def one(path, old, new):
-              p = Path(path)
-              text = p.read_text(encoding='utf-8')
-              if text.count(old) != 1:
-                  raise SystemExit(f'{path}: replacement mismatch: {old[:80]!r}')
-              p.write_text(text.replace(old, new, 1), encoding='utf-8')
-
-          one('apps/desktop/src/main.ts',
-              "      backgroundMaterial: 'acrylic' as const,\n      hasShadow: true,",
-              "      backgroundColor: '#07111d',\n      hasShadow: true,")
-          one('packages/client/ui-desktop-customization/src/client/DesktopCustomization.module.css',
-              '  background-attachment: fixed, fixed !important;',
-              '  background-attachment: scroll, scroll !important;')
-
-          remote_path = Path('third_party/dsh-remote/package.json')
-          remote = json.loads(remote_path.read_text(encoding='utf-8'))
-          files = list(remote.get('files', []))
-          if 'SCORPION.md' not in files:
-              files.append('SCORPION.md')
-          remote['files'] = files
-          remote_path.write_text(json.dumps(remote, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-
-          desktop_path = Path('apps/desktop/package.json')
-          desktop = json.loads(desktop_path.read_text(encoding='utf-8'))
-          desktop['version'] = '0.1.0-rc.6.1'
-          desktop['description'] = 'DeepSeek Harness desktop application with Scorpion branding, integrated Plugin Center, and performance-tuned Windows shell'
-          desktop['build']['publish'] = [{'provider': 'github', 'owner': 'plutoczm', 'repo': 'deepseek-harness-vscode'}]
-          desktop_path.write_text(json.dumps(desktop, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-
-          runtime_path = Path('apps/desktop/runtime/package.json')
-          runtime = json.loads(runtime_path.read_text(encoding='utf-8'))
-          runtime['dependencies']['dsh-remote'] = 'workspace:*'
-          runtime_path.write_text(json.dumps(runtime, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-
-          workspace = Path('pnpm-workspace.yaml')
-          w = workspace.read_text(encoding='utf-8')
-          if '  - third_party/*\n' not in w:
-              marker = '  - vendor/*\n'
-              if w.count(marker) != 1:
-                  raise SystemExit('pnpm workspace marker mismatch')
-              w = w.replace(marker, marker + '  - third_party/*\n', 1)
-          if '  ssh2: false\n' not in w or '  cpu-features: false\n' not in w:
-              marker = '  electron-winstaller: false\n'
-              if w.count(marker) != 1:
-                  raise SystemExit('allowBuilds marker mismatch')
-              w = w.replace(marker, marker + '  ssh2: false\n  cpu-features: false\n', 1)
-          workspace.write_text(w, encoding='utf-8')
-
-          one('apps/desktop/tests/packaging-config.spec.ts',
-              'ec9cfe5ee2c931f23ba458d834a4ac75b2d50d1dcc5d94112e60c5c894455003',
-              'e8dd7d891bbbd4906bc806337d8d3a05abb7eade240b82b1e245a1026f1b76fc')
-          one('apps/desktop/tests/plugin-center-compatibility.spec.ts',
-              "    expect(fingerprint).toMatchObject({\n      desktopVersion: '0.1.0-rc.5',",
-              "    expect(fingerprint).toMatchObject({\n      desktopVersion: '0.1.0-rc.6.1',")
-          one('apps/desktop/tests/plugin-center-install.e2e.ts',
-              "import { resolveSupportedPluginPlatform } from '../src/plugin-center/environment.ts'\n",
-              '')
-          one('apps/desktop/tests/plugin-center-install.e2e.ts',
-              '      os: process.platform,\n      architecture: process.arch,',
-              "      os: 'win32',\n      architecture: 'x64',")
-          one('apps/desktop/tests/plugin-center-install.e2e.ts',
-              '    expect(first.platform).toBe(resolveSupportedPluginPlatform(process.platform, process.arch))',
-              "    expect(first.platform).toBe('win32-x64')")
-          one('apps/desktop/tests/plugin-center-recovery-matrix.e2e.ts',
-              "    dsh: {\n      bundle: { patch: './cordis.patch.yml' },\n      pluginCenter: {",
-              "    dsh: {\n      bundle: { patch: './cordis.patch.yml' },\n      client: {},\n      pluginCenter: {")
-
-          release_test = (
-              "import { readFileSync } from 'node:fs'\n"
-              "import { resolve } from 'node:path'\n"
-              "import { describe, expect, it } from 'vitest'\n\n"
-              "const repositoryRoot = resolve(import.meta.dirname, '../../..')\n"
-              "const desktopPackage = JSON.parse(\n"
-              "  readFileSync(resolve(repositoryRoot, 'apps/desktop/package.json'), 'utf8'),\n"
-              ") as { build: { publish: readonly Record<string, string>[] } }\n\n"
-              "describe('desktop GitHub update publishing', () => {\n"
-              "  it('publishes Desktop updates from the maintained GitHub repository', () => {\n"
-              "    expect(desktopPackage.build.publish).toEqual([{\n"
-              "      provider: 'github',\n"
-              "      owner: 'plutoczm',\n"
-              "      repo: 'deepseek-harness-vscode',\n"
-              "    }])\n"
-              "  })\n"
-              "})\n"
-          )
-          Path('apps/desktop/tests/github-release-workflow.spec.ts').write_text(release_test, encoding='utf-8')
-          PY
-
-      - name: Install dependencies and refresh lockfile
-        run: pnpm install --no-frozen-lockfile
-
-      - name: Verify enhanced dsh-remote resolves from Desktop runtime
-        shell: bash
-        run: |
-          set -euo pipefail
-          pnpm --dir apps/desktop/runtime exec node -e "const p=require('dsh-remote/package.json'); console.log(require.resolve('dsh-remote/package.json')); if(p.version!=='0.5.7'||!p.files.includes('SCORPION.md')) process.exit(1)"
-
-      - name: Typecheck
-        shell: bash
-        run: pnpm run typecheck
-
-      - name: Production build
-        run: pnpm run build
-
-      - name: Desktop and Plugin Center tests
-        run: pnpm exec vitest run apps/desktop packages/client/ui-plugin-center
-
-      - name: Final source assertions
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -f third_party/dsh-remote/SCORPION.md
-          grep -Fq 'forwardIn(remoteHost, requestedPort' third_party/dsh-remote/lib/index.js
-          grep -Fq 'rw_proxy_tunnel' third_party/dsh-remote/lib/index.js
-          grep -Fq 'SSH 反向代理' third_party/dsh-remote/lib/client.js
-          node -e "const p=require('./third_party/dsh-remote/package.json'); if(!p.files.includes('SCORPION.md')) process.exit(1)"
-          ! test -e packages/client/ui-plugin-center/src/client/PluginDiscoveryPage.tsx
-          ! test -e packages/client/ui-plugin-center/src/client/PluginDiscoveryNavItem.tsx
-          ! test -e packages/client/ui-plugin-center/tests/discovery.client.spec.tsx
-          ! grep -R -qE 'PluginDiscovery|plugin-discovery' packages/client/ui-plugin-center/src/client/index.ts packages/client/ui-plugin-center/tsconfig.client.json
-          ! grep -q "backgroundMaterial: 'acrylic'" apps/desktop/src/main.ts
-          grep -q "backgroundColor: '#07111d'" apps/desktop/src/main.ts
-          grep -q '"provider": "github"' apps/desktop/package.json
-          grep -q '"owner": "plutoczm"' apps/desktop/package.json
-          grep -q '"repo": "deepseek-harness-vscode"' apps/desktop/package.json
-          grep -q '  ssh2: false' pnpm-workspace.yaml
-          grep -q '  cpu-features: false' pnpm-workspace.yaml
-
-      - name: Stage validated source
-        if: github.ref == 'refs/heads/main'
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -rf .scorpion
-          git add -A
-          git status --short
-          test -n "$(git status --porcelain)"
-
-      - name: Commit validated source
-        if: github.ref == 'refs/heads/main'
+      - name: Commit vendored runtime files
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'feat: finalize Scorpion desktop and remote proxy workflow'
-
-      - name: Push validated source
-        if: github.ref == 'refs/heads/main'
-        shell: bash
-        run: |
-          set -euo pipefail
+          git add -f third_party/dsh-remote/lib
+          git status --short
+          git diff --cached --quiet && { echo 'No runtime files to persist'; exit 1; }
+          git commit -m 'fix: persist enhanced dsh-remote runtime files'
           git push origin HEAD:main
-
-      - name: Remove temporary branches
-        if: github.ref == 'refs/heads/main'
-        shell: bash
-        run: |
-          git push origin --delete diag-temp || true
-          git push origin --delete fix/ci-plugin-center-tests-20260817 || true
