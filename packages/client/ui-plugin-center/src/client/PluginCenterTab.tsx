@@ -177,6 +177,7 @@ function CatalogMark({ entry, compact = false }: { readonly entry: CatalogSummar
           width={entry.icon.width}
           height={entry.icon.height}
           loading="lazy"
+          decoding="async"
           referrerPolicy="no-referrer"
           onError={(event) => { event.currentTarget.hidden = true }}
         />
@@ -395,9 +396,11 @@ export function PluginCenterTab({
   const catalogInstallRequest = useRef(0)
   const initialRefreshStarted = useRef(false)
   const observedTerminal = useRef<string | null>(null)
+  const listCache = useRef(new Map<string, CatalogListResult>())
   const [kind, setKind] = useState<CatalogKind>('plugin')
   const [scope, setScope] = useState<CatalogScope>('public')
   const [query, setQuery] = useState('')
+  const [debouncedQuery, setDebouncedQuery] = useState('')
   const [revision, setRevision] = useState(0)
   const [view, setView] = useState<ViewState>({ status: 'loading' })
   const [installed, setInstalled] = useState<InstalledViewState>({ status: 'loading' })
@@ -426,12 +429,17 @@ export function PluginCenterTab({
   const [recoveryBusy, setRecoveryBusy] = useState(false)
   const [diagnosticResult, setDiagnosticResult] = useState<'saved' | 'cancelled' | 'failed' | null>(null)
 
+  useEffect(() => {
+    const timer = setTimeout(() => { setDebouncedQuery(query) }, 220)
+    return () => { clearTimeout(timer) }
+  }, [query])
+
   const criteria = useMemo<CatalogListQuery>(() => ({
     catalogKind: kind,
     scope,
-    query: query.trim(),
+    query: debouncedQuery.trim(),
     limit: 24,
-  }), [kind, query, scope])
+  }), [debouncedQuery, kind, scope])
 
   const installedCatalogItems = useMemo(() => {
     const items = new Map<string, InstalledPluginProjection>()
@@ -452,8 +460,14 @@ export function PluginCenterTab({
   useEffect(() => {
     if (!available) return
     let current = true
+    const cacheKey = `${criteria.catalogKind}:${criteria.scope}:${criteria.query}:${criteria.limit}`
+    const cached = listCache.current.get(cacheKey)
+    if (cached !== undefined && cached.freshness !== 'stale') {
+      setView({ status: 'ready', result: cached })
+    }
     void Promise.resolve().then(() => list(criteria)).then(
       (result) => {
+        if (result.freshness !== 'stale') listCache.current.set(cacheKey, result)
         if (current) setView({ status: 'ready', result })
         if (criteria.catalogKind !== 'plugin' || criteria.scope !== 'public' || criteria.query !== ''
           || initialRefreshStarted.current) return

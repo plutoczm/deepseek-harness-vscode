@@ -48,6 +48,8 @@
    measurement/mount unit for a virtualizer without changing the column gap. */
 .flowItem {
   min-width: 0;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 160px;
 }
 
 /* A keyed renderer may intentionally decline its row after dispatch (the

@@ -1781,3 +1781,9 @@
     flex-wrap: wrap;
   }
 }
+
+/* Scorpion performance: skip off-screen catalog-card paint/layout until needed. */
+.card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 88px;
+}
