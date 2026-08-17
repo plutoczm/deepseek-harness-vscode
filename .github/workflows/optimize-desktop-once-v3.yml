@@ -84,7 +84,7 @@ jobs:
           text = plugin_css.read_text(encoding='utf-8')
           marker = '/* Scorpion performance: skip off-screen catalog-card paint/layout until needed. */'
           if marker not in text:
-              text += (\n                  '\n' + marker + '\n'\n                  '.card {\n'\n                  '  content-visibility: auto;\n'\n                  '  contain-intrinsic-size: auto 88px;\n'\n                  '}\n'\n              )
+              text += '\n' + marker + '\n.card {\n  content-visibility: auto;\n  contain-intrinsic-size: auto 88px;\n}\n'
               plugin_css.write_text(text, encoding='utf-8')
 
           chat_css = 'packages/client/ui-conversation/src/client/chat/ChatView.module.css'
