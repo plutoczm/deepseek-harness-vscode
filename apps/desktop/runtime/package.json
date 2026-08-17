@@ -205,6 +205,7 @@
     "@deepseek-ai/node-addon-landlock-run-linux-arm64": "workspace:^",
     "@deepseek-ai/node-addon-landlock-run-linux-x64": "workspace:^",
     "@deepseek-ai/schemastery": "workspace:^",
-    "pnpm": "11.7.0"
+    "pnpm": "11.7.0",
+    "dsh-remote": "workspace:*"
   }
 }

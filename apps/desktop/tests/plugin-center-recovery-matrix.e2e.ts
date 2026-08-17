@@ -106,6 +106,7 @@ async function writeBundle(profile: string, version: string): Promise<void> {
     version,
     dsh: {
       bundle: { patch: './cordis.patch.yml' },
+      client: {},
       pluginCenter: {
         expectedEntries: BASE_CANDIDATE.expectedEntries,
         expectedClientModules: BASE_CANDIDATE.expectedClientModules,

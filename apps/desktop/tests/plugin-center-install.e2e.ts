@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it } from 'vitest'
 import { initProfile, loadProfile, readProfileManifest } from '@deepseek-ai/dsh-app-boot'
 import { BUNDLED_CATALOG } from '../src/plugin-center/catalog-fixture.ts'
-import { resolveSupportedPluginPlatform } from '../src/plugin-center/environment.ts'
 import {
   createPackageManagerInvocation,
   installTrustedPackage,
@@ -81,8 +80,8 @@ describe('trusted installation relaunch persistence', () => {
       desktopVersion: '0.1.0-rc.5',
       dshVersion: '0.1.0-rc.5',
       nodeVersion: process.versions.node,
-      os: process.platform,
-      architecture: process.arch,
+      os: 'win32',
+      architecture: 'x64',
       catalogEtag: BUNDLED_CATALOG.etag,
       catalogFreshness: 'fresh',
       candidates: BUNDLED_CATALOG.preflights,
@@ -90,7 +89,7 @@ describe('trusted installation relaunch persistence', () => {
       activeOperation: false,
     })
     const first = readProjection()
-    expect(first.platform).toBe(resolveSupportedPluginPlatform(process.platform, process.arch))
+    expect(first.platform).toBe('win32-x64')
     expect(first.installedPlugins).toEqual([{
       pluginId: candidate!.pluginId,
       version: candidate!.version,

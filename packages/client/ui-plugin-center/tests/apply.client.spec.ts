@@ -7,8 +7,6 @@ import { usePinnedBrowserLanguages } from '@deepseek-ai/dsh-client-test-runtime'
 import { apply, inject, NS } from '../src/client/index.ts'
 import { PluginCenterNavItem, type PluginCenterNavInjected } from '../src/client/PluginCenterNavItem.tsx'
 import { PluginCenterTab, type PluginCenterTabInjected } from '../src/client/PluginCenterTab.tsx'
-import { PluginDiscoveryNavItem, type PluginDiscoveryNavInjected } from '../src/client/PluginDiscoveryNavItem.tsx'
-import { PluginDiscoveryPage, type PluginDiscoveryInjected } from '../src/client/PluginDiscoveryPage.tsx'
 import { compatibilityDecision, installedListResult, listResult } from './fixtures.ts'
 
 usePinnedBrowserLanguages('zh-CN')
@@ -24,21 +22,9 @@ async function bench(withBridge: boolean) {
   const locale = new LocaleRuntime(ctx)
   const layout = { openPrimaryPage: vi.fn(), closePrimaryPage: vi.fn() }
   const settingsNavigation = { open: vi.fn(), subscribe: vi.fn(() => () => {}) }
-  const conversation = { send: vi.fn(async () => {}) }
-  const agentContext = { get: vi.fn(() => conversation) }
-  const sessions = {
-    list: { getSnapshot: vi.fn<() => { current?: string }>(() => ({})) },
-    scope: vi.fn(() => agentContext),
-  }
-  const workspaces = { startSession: vi.fn() }
-  const connection = { api: { credentials: { describe: vi.fn() } } }
   ctx.provide('locale', locale)
   ctx.provide('layout', layout as never)
   ctx.provide('settingsNavigation', settingsNavigation as never)
-  ctx.provide('sessions', sessions as never)
-  ctx.provide('workspaces', workspaces as never)
-  ctx.provide('connection', connection as never)
-  ctx.provide('conversation', conversation as never)
   const list = vi.fn<PluginCenterTabInjected['list']>(async query => listResult(query))
   const refresh = vi.fn<PluginCenterTabInjected['refresh']>(async query => listResult(query))
   const detail = vi.fn(async () => ({
@@ -74,7 +60,6 @@ async function bench(withBridge: boolean) {
   }
   return {
     ctx, slots: ctx.get('slots') as SlotRegistry, locale, layout, settingsNavigation,
-    sessions, workspaces, connection, conversation,
     list, refresh, detail, checkCompatibility, listInstalled, install, manage, getOperation, onState,
     getOwnedDataOffer, removeOwnedData, retainOwnedData,
   }
@@ -91,39 +76,31 @@ function declare(slots: SlotRegistry): () => void {
 }
 
 describe('ui-plugin-center browser plugin', () => {
-  it('registers localized Plugin Center and Plugin Discovery pages', async () => {
+  it('registers Plugin Center as the only plugin-market page', async () => {
     const b = await bench(true)
     declare(b.slots)
     await b.ctx.plugin({ inject: [...inject], apply }).await()
 
-    expect(inject).toEqual([
-      'slots', 'layout', 'locale', 'settingsNavigation', 'sessions', 'workspaces', 'connection', 'conversation',
-    ])
+    expect(inject).toEqual(['slots', 'layout', 'locale', 'settingsNavigation'])
     const navs = b.slots.entries('sidebar.primary.action')
     const pages = b.slots.entries('main.page')
-    const nav = navs.find(entry => entry.options.id === 'plugin-center')!
-    const discoveryNav = navs.find(entry => entry.options.id === 'plugin-discovery')!
-    const page = pages.find(entry => entry.options.key === 'plugin-center')!
-    const discoveryPage = pages.find(entry => entry.options.key === 'plugin-discovery')!
+    expect(navs).toHaveLength(1)
+    expect(pages).toHaveLength(1)
+    expect(navs.some(entry => entry.options.id === 'plugin-discovery')).toBe(false)
+    expect(pages.some(entry => entry.options.key === 'plugin-discovery')).toBe(false)
+
+    const nav = navs[0]!
+    const page = pages[0]!
     expect(nav.component).toBe(PluginCenterNavItem)
     expect(nav.options).toMatchObject({ id: 'plugin-center', order: 20 })
-    expect(discoveryNav.component).toBe(PluginDiscoveryNavItem)
-    expect(discoveryNav.options).toMatchObject({ id: 'plugin-discovery', order: 21 })
     expect(page.component).toBe(PluginCenterTab)
     expect(page.options).toMatchObject({ key: 'plugin-center' })
-    expect(discoveryPage.component).toBe(PluginDiscoveryPage)
-    expect(discoveryPage.options).toMatchObject({ key: 'plugin-discovery' })
     expect(nav.locale).toBe(NS)
-    expect(discoveryNav.locale).toBe(NS)
     expect(page.locale).toBe(NS)
-    expect(discoveryPage.locale).toBe(NS)
 
     const navFace = (nav.inject as unknown as () => PluginCenterNavInjected)()
     navFace.open()
     expect(b.layout.openPrimaryPage).toHaveBeenCalledWith('plugin-center')
-    const discoveryNavFace = (discoveryNav.inject as unknown as () => PluginDiscoveryNavInjected)()
-    discoveryNavFace.open()
-    expect(b.layout.openPrimaryPage).toHaveBeenCalledWith('plugin-discovery')
 
     const face = (page.inject as unknown as () => PluginCenterTabInjected)()
     expect(face.available).toBe(true)
@@ -149,9 +126,7 @@ describe('ui-plugin-center browser plugin', () => {
     expect(b.list).toHaveBeenCalledWith(query)
     expect(b.refresh).toHaveBeenCalledWith(query)
     expect(b.detail).toHaveBeenCalledWith({ pluginId: 'fixture.workspace-tools', version: '1.0.0' })
-    expect(b.checkCompatibility).toHaveBeenCalledWith({
-      pluginId: 'fixture.workspace-tools', version: '1.0.0', action: 'install',
-    })
+    expect(b.checkCompatibility).toHaveBeenCalledWith({ pluginId: 'fixture.workspace-tools', version: '1.0.0', action: 'install' })
     expect(b.listInstalled).toHaveBeenCalledOnce()
     expect(b.settingsNavigation.open).toHaveBeenCalledWith({ sectionId: 'plugins', tabId: 'all' })
     expect(b.getOperation).toHaveBeenCalledOnce()
@@ -160,40 +135,9 @@ describe('ui-plugin-center browser plugin', () => {
     expect(b.removeOwnedData).toHaveBeenCalledOnce()
     expect(b.retainOwnedData).toHaveBeenCalledOnce()
 
-    const discoveryFace = (discoveryPage.inject as unknown as () => PluginDiscoveryInjected)()
-    expect(discoveryFace.available).toBe(true)
-    expect(discoveryFace.development).toBe(false)
-    expect(discoveryFace.mutationsEnabled).toBe(false)
-    await discoveryFace.list(query)
-    await discoveryFace.refresh(query)
-    await discoveryFace.detail({ pluginId: 'fixture.workspace-tools', version: '1.0.0' })
-    await discoveryFace.checkCompatibility({
-      pluginId: 'fixture.workspace-tools', version: '1.0.0', action: 'install',
-    })
-    await discoveryFace.listInstalled()
-    await discoveryFace.getOperation()
-    const stopDiscovery = discoveryFace.onOperationState(() => {})
-    stopDiscovery()
-    discoveryFace.openPluginCenter()
-    expect(b.layout.openPrimaryPage).toHaveBeenLastCalledWith('plugin-center')
-    await expect(discoveryFace.findWithAgent('帮我找 PDF 插件')).resolves.toBe('session-starting')
-    expect(b.workspaces.startSession).toHaveBeenCalledOnce()
-
-    b.sessions.list.getSnapshot.mockReturnValue({ current: 'session-1' })
-    b.connection.api.credentials.describe.mockResolvedValue({
-      result: { ok: true, value: { credentials: { DEEPSEEK_API_KEY: { configured: false } } } },
-    })
-    await expect(discoveryFace.findWithAgent('帮我找 PDF 插件')).resolves.toBe('needs-model')
-    expect(b.settingsNavigation.open).toHaveBeenLastCalledWith({ sectionId: 'models' })
-
-    b.connection.api.credentials.describe.mockResolvedValue({
-      result: { ok: true, value: { credentials: { DEEPSEEK_API_KEY: { configured: true } } } },
-    })
-    await expect(discoveryFace.findWithAgent('帮我找 PDF 插件')).resolves.toBe('sent')
-    expect(b.sessions.scope).toHaveBeenLastCalledWith('session-1')
-    expect(b.conversation.send).toHaveBeenCalledWith('/find-plugins 帮我找 PDF 插件')
-    expect(b.layout.closePrimaryPage).toHaveBeenLastCalledWith('plugin-discovery')
     await b.ctx.fiber.dispose()
+    expect(b.layout.closePrimaryPage).toHaveBeenCalledWith('plugin-center')
+    expect(b.layout.closePrimaryPage).not.toHaveBeenCalledWith('plugin-discovery')
   })
 
   it('survives late declaration and exposes a read-only browser absence face', async () => {
@@ -203,10 +147,10 @@ describe('ui-plugin-center browser plugin', () => {
     expect(b.slots.entries('main.page')).toHaveLength(0)
     const stop = declare(b.slots)
     await vi.waitFor(() => {
-      expect(b.slots.entries('sidebar.primary.action')).toHaveLength(2)
-      expect(b.slots.entries('main.page')).toHaveLength(2)
+      expect(b.slots.entries('sidebar.primary.action')).toHaveLength(1)
+      expect(b.slots.entries('main.page')).toHaveLength(1)
     })
-    const pluginCenterPage = b.slots.entries('main.page').find(entry => entry.options.key === 'plugin-center')!
+    const pluginCenterPage = b.slots.entries('main.page')[0]!
     const face = (pluginCenterPage.inject as unknown as () => PluginCenterTabInjected)()
     expect(face.available).toBe(false)
     expect(face.development).toBe(false)
@@ -215,12 +159,11 @@ describe('ui-plugin-center browser plugin', () => {
     stop()
     expect(b.slots.entries('main.page')).toHaveLength(0)
     declare(b.slots)
-    await vi.waitFor(() => { expect(b.slots.entries('main.page')).toHaveLength(2) })
+    await vi.waitFor(() => { expect(b.slots.entries('main.page')).toHaveLength(1) })
     b.locale.setLocale('en')
     await fiber.dispose()
     expect(b.slots.entries('main.page')).toHaveLength(0)
     expect(b.layout.closePrimaryPage).toHaveBeenCalledWith('plugin-center')
-    expect(b.layout.closePrimaryPage).toHaveBeenCalledWith('plugin-discovery')
     await b.ctx.fiber.dispose()
   })
 
@@ -232,7 +175,7 @@ describe('ui-plugin-center browser plugin', () => {
     const b = await bench(false)
     declare(b.slots)
     await b.ctx.plugin({ inject: [...inject], apply }).await()
-    const pluginCenterPage = b.slots.entries('main.page').find(entry => entry.options.key === 'plugin-center')!
+    const pluginCenterPage = b.slots.entries('main.page')[0]!
     const face = (pluginCenterPage.inject as unknown as () => PluginCenterTabInjected)()
     expect(face.available).toBe(true)
     expect(face.development).toBe(true)

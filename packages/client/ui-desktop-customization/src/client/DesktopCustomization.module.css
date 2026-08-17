@@ -10,7 +10,7 @@
   background-position: center, center var(--dsh-desktop-background-position) !important;
   background-size: cover, cover !important;
   background-repeat: no-repeat, no-repeat !important;
-  background-attachment: fixed, fixed !important;
+  background-attachment: scroll, scroll !important;
 }
 
 :global(body[data-dsh-desktop-skin='active']:not([data-ds-dark-theme])) {

@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-desktop",
-  "description": "DeepSeek Harness desktop application with tray-owned Host lifecycle",
-  "version": "0.1.0-rc.6",
+  "description": "DeepSeek Harness desktop application with Scorpion branding, integrated Plugin Center, and performance-tuned Windows shell",
+  "version": "0.1.0-rc.6.1",
   "private": true,
   "type": "module",
   "main": "lib/main.js",
@@ -67,8 +67,9 @@
     ],
     "publish": [
       {
-        "provider": "generic",
-        "url": "https://ml2022.oss-cn-hangzhou.aliyuncs.com/deepseek-harness-desktop/releases"
+        "provider": "github",
+        "owner": "plutoczm",
+        "repo": "deepseek-harness-vscode"
       }
     ],
     "toolsets": {

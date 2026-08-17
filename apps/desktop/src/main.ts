@@ -259,7 +259,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
       visualEffectState: 'followWindow' as const,
     } : {}),
     ...(process.platform === 'win32' ? {
-      backgroundMaterial: 'acrylic' as const,
+      backgroundColor: '#07111d',
       hasShadow: true,
       roundedCorners: true,
       thickFrame: true,
