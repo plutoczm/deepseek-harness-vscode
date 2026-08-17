@@ -42,8 +42,12 @@ jobs:
             'https://github.com/flymysql/dsh-remote/archive/bd56bcd6435aec08e6ac583c21d39bb9e81f1022.tar.gz' \
             | tar -xz --strip-components=1 -C third_party/dsh-remote
           cat .scorpion/proxy.*.b64 | tr -d '\n\r' | base64 -d | gzip -d > /tmp/dsh-remote.patch
-          git -C third_party/dsh-remote apply --check /tmp/dsh-remote.patch
-          git -C third_party/dsh-remote apply /tmp/dsh-remote.patch
+          git apply --check --directory=third_party/dsh-remote /tmp/dsh-remote.patch
+          git apply --directory=third_party/dsh-remote /tmp/dsh-remote.patch
+          test -f third_party/dsh-remote/SCORPION.md
+          grep -Fq 'forwardIn(remoteHost, requestedPort' third_party/dsh-remote/lib/index.js
+          grep -Fq 'rw_proxy_tunnel' third_party/dsh-remote/lib/index.js
+          grep -Fq 'SSH 反向代理' third_party/dsh-remote/lib/client.js
           node --check third_party/dsh-remote/lib/index.js
           node --check third_party/dsh-remote/lib/client.js
           node -e "const p=require('./third_party/dsh-remote/package.json'); if(p.name!=='dsh-remote'||p.version!=='0.5.7'||p.license!=='MIT') process.exit(1)"
@@ -91,6 +95,14 @@ jobs:
               '  background-attachment: fixed, fixed !important;',
               '  background-attachment: scroll, scroll !important;')
 
+          remote_path = Path('third_party/dsh-remote/package.json')
+          remote = json.loads(remote_path.read_text(encoding='utf-8'))
+          files = list(remote.get('files', []))
+          if 'SCORPION.md' not in files:
+              files.append('SCORPION.md')
+          remote['files'] = files
+          remote_path.write_text(json.dumps(remote, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
           desktop_path = Path('apps/desktop/package.json')
           desktop = json.loads(desktop_path.read_text(encoding='utf-8'))
           desktop['version'] = '0.1.0-rc.6.1'
@@ -116,6 +128,45 @@ jobs:
                   raise SystemExit('allowBuilds marker mismatch')
               w = w.replace(marker, marker + '  ssh2: false\n  cpu-features: false\n', 1)
           workspace.write_text(w, encoding='utf-8')
+
+          one('apps/desktop/tests/packaging-config.spec.ts',
+              'ec9cfe5ee2c931f23ba458d834a4ac75b2d50d1dcc5d94112e60c5c894455003',
+              'e8dd7d891bbbd4906bc806337d8d3a05abb7eade240b82b1e245a1026f1b76fc')
+          one('apps/desktop/tests/plugin-center-compatibility.spec.ts',
+              "    expect(fingerprint).toMatchObject({\n      desktopVersion: '0.1.0-rc.5',",
+              "    expect(fingerprint).toMatchObject({\n      desktopVersion: '0.1.0-rc.6.1',")
+          one('apps/desktop/tests/plugin-center-install.e2e.ts',
+              "import { resolveSupportedPluginPlatform } from '../src/plugin-center/environment.ts'\n",
+              '')
+          one('apps/desktop/tests/plugin-center-install.e2e.ts',
+              '      os: process.platform,\n      architecture: process.arch,',
+              "      os: 'win32',\n      architecture: 'x64',")
+          one('apps/desktop/tests/plugin-center-install.e2e.ts',
+              '    expect(first.platform).toBe(resolveSupportedPluginPlatform(process.platform, process.arch))',
+              "    expect(first.platform).toBe('win32-x64')")
+          one('apps/desktop/tests/plugin-center-recovery-matrix.e2e.ts',
+              "    dsh: {\n      bundle: { patch: './cordis.patch.yml' },\n      pluginCenter: {",
+              "    dsh: {\n      bundle: { patch: './cordis.patch.yml' },\n      client: {},\n      pluginCenter: {")
+
+          release_test = (
+              "import { readFileSync } from 'node:fs'\n"
+              "import { resolve } from 'node:path'\n"
+              "import { describe, expect, it } from 'vitest'\n\n"
+              "const repositoryRoot = resolve(import.meta.dirname, '../../..')\n"
+              "const desktopPackage = JSON.parse(\n"
+              "  readFileSync(resolve(repositoryRoot, 'apps/desktop/package.json'), 'utf8'),\n"
+              ") as { build: { publish: readonly Record<string, string>[] } }\n\n"
+              "describe('desktop GitHub update publishing', () => {\n"
+              "  it('publishes Desktop updates from the maintained GitHub repository', () => {\n"
+              "    expect(desktopPackage.build.publish).toEqual([{\n"
+              "      provider: 'github',\n"
+              "      owner: 'plutoczm',\n"
+              "      repo: 'deepseek-harness-vscode',\n"
+              "    }])\n"
+              "  })\n"
+              "})\n"
+          )
+          Path('apps/desktop/tests/github-release-workflow.spec.ts').write_text(release_test, encoding='utf-8')
           PY
 
       - name: Install dependencies and refresh lockfile
@@ -125,7 +176,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          pnpm --dir apps/desktop/runtime exec node -e "const p=require('dsh-remote/package.json'); console.log(require.resolve('dsh-remote/package.json')); if(p.version!=='0.5.7') process.exit(1)"
+          pnpm --dir apps/desktop/runtime exec node -e "const p=require('dsh-remote/package.json'); console.log(require.resolve('dsh-remote/package.json')); if(p.version!=='0.5.7'||!p.files.includes('SCORPION.md')) process.exit(1)"
 
       - name: Typecheck
         id: typecheck
@@ -145,20 +196,21 @@ jobs:
           path: typecheck-errors.txt
           retention-days: 1
 
-      - name: Desktop and Plugin Center tests
-        run: pnpm exec vitest run apps/desktop packages/client/ui-plugin-center
-
       - name: Production build
         run: pnpm run build
+
+      - name: Desktop and Plugin Center tests
+        run: pnpm exec vitest run apps/desktop packages/client/ui-plugin-center
 
       - name: Final source assertions
         shell: bash
         run: |
           set -euo pipefail
           test -f third_party/dsh-remote/SCORPION.md
-          grep -q 'forwardIn(remoteHost, requestedPort' third_party/dsh-remote/lib/index.js
-          grep -q 'rw_proxy_tunnel' third_party/dsh-remote/lib/index.js
-          grep -q 'SSH 反向代理' third_party/dsh-remote/lib/client.js
+          grep -Fq 'forwardIn(remoteHost, requestedPort' third_party/dsh-remote/lib/index.js
+          grep -Fq 'rw_proxy_tunnel' third_party/dsh-remote/lib/index.js
+          grep -Fq 'SSH 反向代理' third_party/dsh-remote/lib/client.js
+          node -e "const p=require('./third_party/dsh-remote/package.json'); if(!p.files.includes('SCORPION.md')) process.exit(1)"
           ! test -e packages/client/ui-plugin-center/src/client/PluginDiscoveryPage.tsx
           ! test -e packages/client/ui-plugin-center/src/client/PluginDiscoveryNavItem.tsx
           ! test -e packages/client/ui-plugin-center/tests/discovery.client.spec.tsx
@@ -168,17 +220,23 @@ jobs:
           ! grep -q "backgroundMaterial: 'acrylic'" apps/desktop/src/main.ts
           grep -q "backgroundColor: '#07111d'" apps/desktop/src/main.ts
           grep -q '"provider": "github"' apps/desktop/package.json
+          grep -q '"owner": "plutoczm"' apps/desktop/package.json
+          grep -q '"repo": "deepseek-harness-vscode"' apps/desktop/package.json
           grep -q '  ssh2: false' pnpm-workspace.yaml
           grep -q '  cpu-features: false' pnpm-workspace.yaml
 
       - name: Commit validated source and remove temporary staging files
+        if: github.ref == 'refs/heads/main'
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           rm -rf .scorpion
-          git rm -f .github/workflows/optimize-desktop-once-v3.yml
+          git rm -f \
+            .github/workflows/optimize-desktop-once.yml \
+            .github/workflows/optimize-desktop-once-v2.yml \
+            .github/workflows/optimize-desktop-once-v3.yml
           git add -A
           git diff --cached --check
           git status --short
